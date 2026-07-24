@@ -6,7 +6,7 @@
 
 # --- Core ---
 python-telegram-bot>=22,<23
-# openai>=1.0,<2.0
+groq>=1.0,<2.0
 # langchain>=0.3,<1.0
 
 # --- Database ---

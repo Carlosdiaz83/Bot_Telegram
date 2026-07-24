@@ -13,6 +13,7 @@ Uso:
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from app.models.lead import (
     EstadoComercial,
@@ -45,6 +46,7 @@ from app.services.closing_strategy import (
     interpretar_respuesta_cierre,
 )
 from app.services.knowledge_service import KnowledgeService
+from app.ai.service import AIService
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +59,11 @@ class ConversationManager:
     del usuario desde el primer mensaje hasta el cierre.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, ai_service: Optional[AIService] = None) -> None:
         self.session_manager = SessionManager()
         self.qualifier = LeadQualifierService()
         self.knowledge = KnowledgeService()
+        self.ai = ai_service
 
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
@@ -90,23 +93,38 @@ class ConversationManager:
 
         # ── Descubrimiento de necesidad ──
         if session.etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
-            return self._handle_descubrimiento(session, mensaje)
+            return self._wrap_ia(
+                self._handle_descubrimiento(session, mensaje),
+                session, mensaje,
+            )
 
         # ── Calificación ──
         if session.etapa == EtapaConversacion.CALIFICANDO:
-            return self._handle_calificacion(session, mensaje)
+            return self._wrap_ia(
+                self._handle_calificacion(session, mensaje),
+                session, mensaje,
+            )
 
         # ── Generación de valor ──
         if session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
-            return self._handle_valor(session, mensaje)
+            return self._wrap_ia(
+                self._handle_valor(session, mensaje),
+                session, mensaje,
+            )
 
         # ── Manejo de objeciones ──
         if session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
-            return self._handle_objeciones(session, mensaje)
+            return self._wrap_ia(
+                self._handle_objeciones(session, mensaje),
+                session, mensaje,
+            )
 
         # ── Intento de cierre ──
         if session.etapa == EtapaConversacion.INTENTANDO_CIERRE:
-            return self._handle_cierre(session, mensaje)
+            return self._wrap_ia(
+                self._handle_cierre(session, mensaje),
+                session, mensaje,
+            )
 
         # ── Calificado / Derivado ──
         return (
@@ -352,3 +370,66 @@ class ConversationManager:
         }
 
         return preguntas.get(proxima_pregunta, "¿Podés contarme un poco más?")
+
+    # ─────────────────────────────────────────
+    # IA helpers
+    # ─────────────────────────────────────────
+
+    def _wrap_ia(self, respuesta: str, session: UserSession, mensaje: str) -> str:
+        """Envuelve una respuesta lógica con generación IA si está disponible."""
+        return self._mejorar_respuesta_con_ia(
+            lead=session.lead,
+            etapa=session.etapa,
+            mensaje=mensaje,
+            respuesta_logica=respuesta,
+        )
+
+    def _obtener_knowledge_para_etapa(
+        self, lead: Lead, etapa: EtapaConversacion, mensaje: str
+    ) -> str:
+        """Obtiene la información de knowledge relevante para la etapa."""
+        if etapa == EtapaConversacion.PRESENTANDO_VALOR:
+            if lead.prioridad_cliente == PrioridadCliente.ECONOMICO:
+                return self.knowledge.obtener_argumento_perfil("económico")
+            if lead.grupo_familiar.conyuge or lead.grupo_familiar.hijos:
+                return self.knowledge.obtener_argumento_perfil("familias")
+            if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
+                return self.knowledge.obtener_argumento_perfil("monotributistas")
+            return self.knowledge.obtener_argumento_perfil("particulares")
+
+        if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
+            mensaje_lower = mensaje.lower()
+            if any(p in mensaje_lower for p in ["caro", "cuesta", "precio", "dinero"]):
+                return self.knowledge.obtener_respuesta_objecion("caro")
+            if any(p in mensaje_lower for p in ["pensar", "después", "mañana"]):
+                return self.knowledge.obtener_respuesta_objecion("pensar")
+            if any(p in mensaje_lower for p in ["seguro", "duda", "no sé"]):
+                return self.knowledge.obtener_respuesta_objecion("seguro")
+            if any(p in mensaje_lower for p in ["tiempo", "ocupado"]):
+                return self.knowledge.obtener_respuesta_objecion("tiempo")
+            return self.knowledge.obtener_objeciones()
+
+        if etapa == EtapaConversacion.INTENTANDO_CIERRE:
+            return self.knowledge.obtener_cierres()
+
+        return self.knowledge.obtener_beneficios()
+
+    def _mejorar_respuesta_con_ia(
+        self,
+        lead: Lead,
+        etapa: EtapaConversacion,
+        mensaje: str,
+        respuesta_logica: str,
+    ) -> str:
+        """Usa la IA para mejorar la respuesta lógica con lenguaje natural."""
+        if self.ai is None or not self.ai.disponible:
+            return respuesta_logica
+
+        knowledge = self._obtener_knowledge_para_etapa(lead, etapa, mensaje)
+        return self.ai.generar_respuesta(
+            lead=lead,
+            etapa=etapa,
+            knowledge=knowledge,
+            mensaje_cliente=mensaje,
+            respuesta_fallback=respuesta_logica,
+        )

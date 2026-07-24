@@ -23,8 +23,8 @@ class BotConfig:
 
     Attributes:
         telegram_token: Token del bot de Telegram (obtenido de @BotFather).
-        openai_api_key: API key de OpenAI (para uso futuro).
-        openai_model: Modelo de OpenAI a utilizar.
+        groq_api_key: API key de Groq (para IA conversacional).
+        ai_model: Modelo de LLM a utilizar.
         database_url: URL de conexión a la base de datos.
         app_env: Entorno de ejecución (development, production).
         app_debug: Si True, habilita logging detallado.
@@ -32,8 +32,8 @@ class BotConfig:
     """
 
     telegram_token: str
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
+    groq_api_key: str = ""
+    ai_model: str = "llama-3.3-70b-versatile"
     database_url: str = "sqlite:///./health_advisor.db"
     app_env: str = "development"
     app_debug: bool = False
@@ -55,7 +55,6 @@ class BotConfig:
             ValueError: Si TELEGRAM_BOT_TOKEN no está definido.
         """
         if env_path is None:
-            # Busca .env desde la raíz del proyecto (dos niveles arriba de config/)
             env_path = Path(__file__).resolve().parent.parent.parent / ".env"
 
         load_dotenv(env_path)
@@ -69,8 +68,8 @@ class BotConfig:
 
         return cls(
             telegram_token=telegram_token,
-            openai_api_key=os.getenv("OPENAI_API_KEY", ""),
-            openai_model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            groq_api_key=os.getenv("GROQ_API_KEY", ""),
+            ai_model=os.getenv("AI_MODEL", "llama-3.3-70b-versatile"),
             database_url=os.getenv("DATABASE_URL", "sqlite:///./health_advisor.db"),
             app_env=os.getenv("APP_ENV", "development"),
             app_debug=os.getenv("APP_DEBUG", "false").lower() in ("true", "1", "yes"),

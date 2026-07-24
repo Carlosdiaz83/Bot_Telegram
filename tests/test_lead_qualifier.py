@@ -39,6 +39,9 @@ from app.services.closing_strategy import (
 )
 from app.services.sales_strategy import generar_argumento
 from app.services.knowledge_service import KnowledgeService
+from app.ai.service import AIService
+from app.ai.client import LLMClient, LLMResponse
+from app.ai.prompts import construir_prompt_sistema, construir_contexto
 
 
 # ─────────────────────────────────────────────
@@ -686,3 +689,234 @@ class TestKnowledgeIntegracion:
         r = manager.procesar_mensaje(tid, "Quiero avanzar")
         assert session.resultado_cierre == ResultadoCierre.ACEPTO
         assert "excelente" in r.lower() or "avanzar" in r.lower() or "bienvenido" in r.lower()
+
+
+# ─────────────────────────────────────────────
+# Tests de IA (Sprint 6) — mock LLM
+# ─────────────────────────────────────────────
+
+class _MockLLMClient(LLMClient):
+    """Cliente LLM mockeado para tests."""
+
+    def __init__(self, respuesta_mock: str = "Respuesta mock de Sofía") -> None:
+        super().__init__(api_key="test-key", provider="groq")
+        self._respuesta_mock = respuesta_mock
+        self._ultima_llamada: list[dict[str, str]] = []
+
+    def generar_respuesta(
+        self,
+        mensajes: list[dict[str, str]],
+        temperatura: float = 0.7,
+        max_tokens: int = 500,
+    ) -> LLMResponse:
+        self._ultima_llamada = mensajes
+        return LLMResponse(
+            texto=self._respuesta_mock,
+            modelo="mock-model",
+            tokens_usados=50,
+            exito=True,
+        )
+
+
+def _crear_ai_mock(respuesta: str = "Respuesta mock de Sofía") -> AIService:
+    """Crea un AIService con cliente mockeado."""
+    ai = AIService.__new__(AIService)
+    ai._client = _MockLLMClient(respuesta)
+    ai._disponible = True
+    return ai
+
+
+class TestAIPrompts:
+    """Tests de prompts y contexto."""
+
+    def test_system_prompt_contiene_personalidad(self) -> None:
+        prompt = construir_prompt_sistema()
+        assert "Sofía" in prompt
+        assert "Servired" in prompt
+        assert "voseo" in prompt.lower() or "argentino" in prompt.lower()
+
+    def test_system_prompt_restringe_inventar(self) -> None:
+        prompt = construir_prompt_sistema()
+        assert "NUNCA inventar" in prompt or "nunca inventar" in prompt.lower()
+
+    def test_construir_contexto_con_lead(self) -> None:
+        lead = Lead(
+            lead_id="ai_001",
+            nombre="Carlos",
+            edad=35,
+            localidad="Córdoba",
+            tipo_afiliacion=TipoAfiliacion.MONOTRIBUTO,
+        )
+        lead.actualizar_grupo_familiar(conyuge=True, hijos=True, cantidad_hijos=2)
+        lead.prioridad_cliente = PrioridadCliente.ECONOMICO
+
+        mensajes = construir_contexto(
+            lead=lead,
+            etapa=EtapaConversacion.MANEJANDO_OBJECIONES,
+            knowledge="Info de objeción precio",
+            mensaje_cliente="Es caro",
+        )
+
+        assert len(mensajes) >= 3
+        system_content = mensajes[0]["content"]
+        assert "Sofía" in system_content
+
+        context_content = mensajes[1]["content"]
+        assert "Carlos" in context_content
+        assert "35" in context_content
+        assert "Córdoba" in context_content
+        assert "monotributo" in context_content.lower()
+        assert "cónyuge" in context_content
+        assert "2 hijos" in context_content
+        assert "objeción precio" in context_content.lower()
+
+        user_content = mensajes[2]["content"]
+        assert user_content == "Es caro"
+
+    def test_construir_contexto_sin_lead(self) -> None:
+        mensajes = construir_contexto(
+            lead=None,
+            etapa=EtapaConversacion.NUEVO,
+            knowledge="",
+            mensaje_cliente="Hola",
+        )
+        assert len(mensajes) == 3
+        assert mensajes[2]["content"] == "Hola"
+
+
+class TestAIClient:
+    """Tests del cliente LLM."""
+
+    def test_respuesta_mock(self) -> None:
+        client = _MockLLMClient("Hola, soy Sofía")
+        resultado = client.generar_respuesta(
+            [{"role": "user", "content": "Hola"}]
+        )
+        assert resultado.exito is True
+        assert resultado.texto == "Hola, soy Sofía"
+        assert resultado.tokens_usados == 50
+
+    def test_guarda_ultima_llamada(self) -> None:
+        client = _MockLLMClient("Test")
+        mensajes = [
+            {"role": "system", "content": "Sos Sofía"},
+            {"role": "user", "content": "Hola"},
+        ]
+        client.generar_respuesta(mensajes)
+        assert client._ultima_llamada == mensajes
+
+    def test_sin_api_key(self) -> None:
+        client = LLMClient(api_key="", provider="groq")
+        resultado = client.generar_respuesta(
+            [{"role": "user", "content": "Hola"}]
+        )
+        assert resultado.exito is False
+        assert "API key" in resultado.error
+
+
+class TestAIService:
+    """Tests del servicio de IA."""
+
+    def test_disponible_con_key(self) -> None:
+        ai = _crear_ai_mock()
+        assert ai.disponible is True
+
+    def test_no_disponible_sin_key(self) -> None:
+        ai = AIService(api_key="", provider="groq")
+        assert ai.disponible is False
+
+    def test_generar_respuesta_mock(self) -> None:
+        ai = _crear_ai_mock("Hola, ¿cómo estás?")
+        respuesta = ai.generar_respuesta(
+            lead=Lead(lead_id="test", nombre="Ana"),
+            etapa=EtapaConversacion.DESCUBRIENDO_NECESIDAD,
+            knowledge="Beneficios de Servired",
+            mensaje_cliente="Hola",
+        )
+        assert respuesta == "Hola, ¿cómo estás?"
+
+    def test_fallback_si_falla(self) -> None:
+        ai = _crear_ai_mock("")
+        ai._disponible = False
+        respuesta = ai.generar_respuesta(
+            lead=None,
+            etapa=EtapaConversacion.NUEVO,
+            knowledge="",
+            mensaje_cliente="Hola",
+            respuesta_fallback="Respuesta de fallback",
+        )
+        assert respuesta == "Respuesta de fallback"
+
+
+class TestAIIntegracion:
+    """Tests de integración IA + ConversationManager."""
+
+    def test_manager_sin_ai_fallback(self) -> None:
+        """Sin IA, ConversationManager usa respuestas lógicas."""
+        manager = ConversationManager(ai_service=None)
+        tid = 90020
+        r = manager.procesar_mensaje(tid, "Hola, soy Lucas")
+        assert "Lucas" in r or "Sofía" in r
+
+    def test_manager_con_ai_mock_objecion(self, manager: ConversationManager) -> None:
+        """IA mockeada recibe contexto de objeción precio."""
+        ai = _crear_ai_mock("Entiendo tu preocupación por el precio, Lucas")
+        manager.ai = ai
+
+        tid = 90021
+        manager.procesar_mensaje(tid, "Hola, soy Lucas")
+        manager.procesar_mensaje(tid, "Solo para mí")
+        manager.procesar_mensaje(tid, "Particular")
+        r = manager.procesar_mensaje(tid, "Me parece caro")
+
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        assert session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES
+
+        # Verificar que la IA fue llamada
+        mock_client: _MockLLMClient = ai._client  # type: ignore
+        assert len(mock_client._ultima_llamada) >= 2
+        context_msg = mock_client._ultima_llamada[1]["content"]
+        assert "objeción" in context_msg.lower() or "precio" in context_msg.lower()
+
+    def test_manager_con_ai_mock_cierre(self) -> None:
+        """IA mockeada recibe contexto de cierre."""
+        ai = _crear_ai_mock("¡Excelente! Avanzamos con tu afiliación")
+        manager = ConversationManager(ai_service=ai)
+
+        tid = 90022
+        manager.procesar_mensaje(tid, "Hola, soy Pedro")
+        manager.procesar_mensaje(tid, "Solo para mí")
+        manager.procesar_mensaje(tid, "Particular")
+
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
+
+        r = manager.procesar_mensaje(tid, "Quiero avanzar")
+        assert session.resultado_cierre == ResultadoCierre.ACEPTO
+
+        # Verificar que la IA fue llamada
+        mock_client: _MockLLMClient = ai._client  # type: ignore
+        assert len(mock_client._ultima_llamada) >= 2
+        context_msg = mock_client._ultima_llamada[1]["content"]
+        assert "cierre" in context_msg.lower() or "beneficio" in context_msg.lower() or "avanzar" in context_msg.lower()
+
+    def test_manager_ai_fallback_en_error(self) -> None:
+        """Si la IA falla, usa respuesta de fallback."""
+        ai = _crear_ai_mock("")
+        manager = ConversationManager(ai_service=ai)
+
+        tid = 90023
+        r1 = manager.procesar_mensaje(tid, "Hola, soy Ana")
+        r2 = manager.procesar_mensaje(tid, "Solo para mí")
+        r3 = manager.procesar_mensaje(tid, "Particular")
+
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
+
+        r4 = manager.procesar_mensaje(tid, "Sí quiero avanzar")
+        # Con fallback vacío, debe usar la respuesta lógica
+        assert session.resultado_cierre == ResultadoCierre.ACEPTO
+        assert "excelente" in r4.lower() or "avanzar" in r4.lower() or "bienvenido" in r4.lower()
