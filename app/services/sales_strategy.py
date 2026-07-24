@@ -63,7 +63,7 @@ def generar_argumento(lead: Lead) -> str:
 
     # Inferir por situación
     if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
-        return _argumento_monotributo(lead)
+        return _argumento_monotributista(lead)
     if lead.tipo_afiliacion == TipoAfiliacion.EMPRESA:
         return _argumento_empresa(lead)
 

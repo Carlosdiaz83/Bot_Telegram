@@ -42,6 +42,9 @@ from app.services.knowledge_service import KnowledgeService
 from app.ai.service import AIService
 from app.ai.client import LLMClient, LLMResponse
 from app.ai.prompts import construir_prompt_sistema, construir_contexto
+from app.database.database import get_engine, crear_tablas, cerrar_engine, get_session_factory
+from app.database.models import Base
+from app.database.repository import ConversationRepository, LeadRepository
 
 
 # ─────────────────────────────────────────────
@@ -920,3 +923,324 @@ class TestAIIntegracion:
         # Con fallback vacío, debe usar la respuesta lógica
         assert session.resultado_cierre == ResultadoCierre.ACEPTO
         assert "excelente" in r4.lower() or "avanzar" in r4.lower() or "bienvenido" in r4.lower()
+
+
+# ─────────────────────────────────────────────
+# Tests de DB / Persistencia (Sprint 7)
+# ─────────────────────────────────────────────
+
+@pytest.fixture
+def db_engine():
+    """Engine SQLite en memoria para tests."""
+    engine = get_engine("sqlite:///:memory:")
+    crear_tablas(engine)
+    yield engine
+    cerrar_engine()
+
+
+@pytest.fixture
+def db_session(db_engine):
+    """Sesión de DB para tests."""
+    factory = get_session_factory(db_engine)
+    session = factory()
+    yield session
+    session.close()
+
+
+class TestLeadRepository:
+    def test_crear_lead(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        lead_db = repo.crear_lead(telegram_id=12345)
+        assert lead_db.id is not None
+        assert lead_db.telegram_id == 12345
+        assert lead_db.estado_comercial == "nuevo"
+
+    def test_buscar_por_telegram_id(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        repo.crear_lead(telegram_id=12345)
+        found = repo.buscar_por_telegram_id(12345)
+        assert found is not None
+        assert found.telegram_id == 12345
+
+    def test_buscar_inexistente(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        found = repo.buscar_por_telegram_id(99999)
+        assert found is None
+
+    def test_actualizar_lead(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        lead_db = repo.crear_lead(telegram_id=12345)
+        lead_db.nombre = "Carlos"
+        lead_db.edad = 35
+        lead_db.localidad = "Córdoba"
+        lead_db.tipo_afiliacion = "monotributo"
+        lead_db.conyuge = True
+        lead_db.hijos = True
+        lead_db.cantidad_hijos = 2
+        lead_db.cantidad_integrantes = 4
+        lead_db.estado_comercial = "calificado"
+        lead_db.etapa_conversacion = "presentando_valor"
+        repo.actualizar_lead(lead_db)
+
+        found = repo.buscar_por_telegram_id(12345)
+        assert found is not None
+        assert found.nombre == "Carlos"
+        assert found.edad == 35
+        assert found.localidad == "Córdoba"
+        assert found.tipo_afiliacion == "monotributo"
+        assert found.conyuge is True
+        assert found.hijos is True
+        assert found.cantidad_hijos == 2
+        assert found.estado_comercial == "calificado"
+        assert found.etapa_conversacion == "presentando_valor"
+
+    def test_listar_leads(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        repo.crear_lead(telegram_id=100)
+        repo.crear_lead(telegram_id=200)
+        repo.crear_lead(telegram_id=300)
+        leads = repo.listar_leads()
+        assert len(leads) == 3
+
+    def test_listar_leads_por_estado(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        l1 = repo.crear_lead(telegram_id=100)
+        l1.estado_comercial = "calificado"
+        repo.actualizar_lead(l1)
+        repo.crear_lead(telegram_id=200)
+        leads = repo.listar_leads(estado="calificado")
+        assert len(leads) == 1
+        assert leads[0].telegram_id == 100
+
+    def test_lead_domain_a_db(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        lead_db = repo.crear_lead(telegram_id=12345)
+        lead = Lead(
+            lead_id="12345",
+            nombre="Pedro",
+            edad=40,
+            localidad="Buenos Aires",
+            tipo_afiliacion=TipoAfiliacion.RELACION_DEPENDENCIA,
+            estado_comercial=EstadoComercial.CALIFICADO,
+            necesidad_principal=NecesidadPrincipal.BENEFICIOS,
+            prioridad_cliente=PrioridadCliente.COMPLETO,
+        )
+        lead.actualizar_grupo_familiar(conyuge=True, hijos=False)
+        repo.lead_domain_a_db(lead, lead_db)
+
+        found = repo.buscar_por_telegram_id(12345)
+        assert found is not None
+        assert found.nombre == "Pedro"
+        assert found.edad == 40
+        assert found.tipo_afiliacion == "relacion_dependencia"
+        assert found.estado_comercial == "calificado"
+        assert found.conyuge is True
+
+    def test_db_a_lead_domain(self, db_session) -> None:
+        repo = LeadRepository(db_session)
+        lead_db = repo.crear_lead(telegram_id=12345)
+        lead_db.nombre = "Ana"
+        lead_db.edad = 30
+        lead_db.tipo_afiliacion = "particular"
+        lead_db.conyuge = False
+        lead_db.hijos = True
+        lead_db.cantidad_hijos = 1
+        lead_db.cantidad_integrantes = 2
+        repo.actualizar_lead(lead_db)
+
+        lead = repo.db_a_lead_domain(lead_db)
+        assert lead.nombre == "Ana"
+        assert lead.edad == 30
+        assert lead.tipo_afiliacion == TipoAfiliacion.PARTICULAR
+        assert lead.grupo_familiar.conyuge is False
+        assert lead.grupo_familiar.hijos is True
+        assert lead.cantidad_hijos == 1
+        assert lead.cantidad_integrantes == 2
+
+
+class TestConversationRepository:
+    def test_guardar_mensaje(self, db_session) -> None:
+        lead_repo = LeadRepository(db_session)
+        lead_db = lead_repo.crear_lead(telegram_id=12345)
+        conv_repo = ConversationRepository(db_session)
+        msg = conv_repo.guardar_mensaje(
+            lead_id=lead_db.id,
+            mensaje_cliente="Hola",
+            respuesta_sofia="¡Hola! Soy Sofía",
+            etapa="nuevo",
+        )
+        assert msg.id is not None
+        assert msg.lead_id == lead_db.id
+        assert msg.mensaje_cliente == "Hola"
+        assert msg.respuesta_sofia == "¡Hola! Soy Sofía"
+        assert msg.etapa == "nuevo"
+
+    def test_historial_lead(self, db_session) -> None:
+        lead_repo = LeadRepository(db_session)
+        lead_db = lead_repo.crear_lead(telegram_id=12345)
+        conv_repo = ConversationRepository(db_session)
+        conv_repo.guardar_mensaje(lead_db.id, "Hola", "Hola!", "nuevo")
+        conv_repo.guardar_mensaje(lead_db.id, "Soy Ana", "Hola Ana!", "descubriendo_necesidad")
+        conv_repo.guardar_mensaje(lead_db.id, "Particular", "Genial", "calificando")
+
+        historial = conv_repo.historial_lead(lead_db.id)
+        assert len(historial) == 3
+        assert historial[0].mensaje_cliente == "Hola"
+        assert historial[2].etapa == "calificando"
+
+    def test_historial_lead_vacio(self, db_session) -> None:
+        lead_repo = LeadRepository(db_session)
+        lead_db = lead_repo.crear_lead(telegram_id=99999)
+        conv_repo = ConversationRepository(db_session)
+        historial = conv_repo.historial_lead(lead_db.id)
+        assert len(historial) == 0
+
+
+class TestConversationManagerDB:
+    def test_manager_sin_db(self) -> None:
+        """Sin database_url, no persiste pero funciona."""
+        manager = ConversationManager(database_url=None)
+        assert manager._db_enabled is False
+        r = manager.procesar_mensaje(80001, "Hola, soy Lucas")
+        assert "Lucas" in r
+
+    def test_manager_con_db_crea_lead(self) -> None:
+        """Con DB, crea lead al primer mensaje."""
+        from sqlalchemy import create_engine as _create_engine
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+        try:
+            manager = ConversationManager(database_url=db_url)
+
+            tid = 80002
+            r = manager.procesar_mensaje(tid, "Hola, soy Martín")
+            assert "Martín" in r
+
+            # Verificar en DB con engine dedicado
+            engine2 = _create_engine(db_url)
+            Session2 = get_session_factory(engine2)
+            db = Session2()
+            try:
+                repo = LeadRepository(db)
+                lead_db = repo.buscar_por_telegram_id(tid)
+                assert lead_db is not None
+                assert lead_db.nombre == "Martín"
+            finally:
+                db.close()
+                engine2.dispose()
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+    def test_manager_con_db_guarda_mensajes(self) -> None:
+        """Con DB, guarda cada intercambio de mensajes."""
+        from sqlalchemy import create_engine as _create_engine
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+        try:
+            manager = ConversationManager(database_url=db_url)
+
+            tid = 80003
+            manager.procesar_mensaje(tid, "Hola, soy Pedro")
+            manager.procesar_mensaje(tid, "Solo para mí")
+            manager.procesar_mensaje(tid, "Particular")
+
+            # Verificar historial en DB
+            engine2 = _create_engine(db_url)
+            Session2 = get_session_factory(engine2)
+            db = Session2()
+            try:
+                lead_repo = LeadRepository(db)
+                lead_db = lead_repo.buscar_por_telegram_id(tid)
+                assert lead_db is not None
+
+                conv_repo = ConversationRepository(db)
+                historial = conv_repo.historial_lead(lead_db.id)
+                assert len(historial) >= 2
+            finally:
+                db.close()
+                engine2.dispose()
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+    def test_manager_con_db_recupera_estado(self) -> None:
+        """Con DB, recupera el estado de la conversación."""
+        from sqlalchemy import create_engine as _create_engine
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+        try:
+            manager1 = ConversationManager(database_url=db_url)
+
+            tid = 80004
+            manager1.procesar_mensaje(tid, "Hola, soy Ana")
+            manager1.procesar_mensaje(tid, "Solo para mí")
+            manager1.procesar_mensaje(tid, "Particular")
+
+            session1 = manager1.session_manager.get(tid)
+            assert session1 is not None
+            etapa1 = session1.etapa
+
+            # Crear nuevo manager (simula reinicio)
+            manager2 = ConversationManager(database_url=db_url)
+            manager2.procesar_mensaje(tid, "Hola de nuevo")
+
+            session2 = manager2.session_manager.get(tid)
+            assert session2 is not None
+            # Debe recuperar nombre y etapa desde DB
+            assert session2.lead.nombre == "Ana"
+            assert session2.etapa == etapa1
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+    def test_manager_con_db_actualiza_lead(self) -> None:
+        """Con DB, actualiza el lead cuando cambian datos."""
+        from sqlalchemy import create_engine as _create_engine
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+        try:
+            manager = ConversationManager(database_url=db_url)
+
+            tid = 80005
+            manager.procesar_mensaje(tid, "Hola, soy Laura")
+            manager.procesar_mensaje(tid, "Solo para mí")
+
+            # Verificar en DB
+            engine2 = _create_engine(db_url)
+            Session2 = get_session_factory(engine2)
+            db = Session2()
+            try:
+                repo = LeadRepository(db)
+                lead_db = repo.buscar_por_telegram_id(tid)
+                assert lead_db is not None
+                assert lead_db.nombre == "Laura"
+                assert lead_db.cantidad_integrantes == 1
+                assert lead_db.conyuge is False
+                assert lead_db.hijos is False
+            finally:
+                db.close()
+                engine2.dispose()
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass

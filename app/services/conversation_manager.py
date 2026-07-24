@@ -47,6 +47,8 @@ from app.services.closing_strategy import (
 )
 from app.services.knowledge_service import KnowledgeService
 from app.ai.service import AIService
+from app.database.database import get_engine, get_session_factory, crear_tablas
+from app.database.repository import ConversationRepository, LeadRepository
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +61,24 @@ class ConversationManager:
     del usuario desde el primer mensaje hasta el cierre.
     """
 
-    def __init__(self, ai_service: Optional[AIService] = None) -> None:
+    def __init__(
+        self,
+        ai_service: Optional[AIService] = None,
+        database_url: Optional[str] = None,
+    ) -> None:
         self.session_manager = SessionManager()
         self.qualifier = LeadQualifierService()
         self.knowledge = KnowledgeService()
         self.ai = ai_service
+
+        # DB — opcional, si no se pasa URL no persiste
+        self._db_enabled = database_url is not None
+        if self._db_enabled:
+            engine = get_engine(database_url)
+            crear_tablas(engine)
+            self._db_factory = get_session_factory(engine)
+        else:
+            self._db_factory = None
 
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
@@ -78,6 +93,11 @@ class ConversationManager:
         """
         session = self.session_manager.get_or_create(telegram_id)
         lead = session.lead
+
+        # DB: cargar lead persistido si existe
+        if self._db_enabled:
+            self._cargar_lead_desde_db(telegram_id, session)
+
         mensaje_lower = mensaje.lower().strip()
 
         logger.debug(
@@ -87,50 +107,59 @@ class ConversationManager:
             mensaje[:50],
         )
 
+        respuesta = ""
+
         # ── Saludo inicial ──
         if session.etapa == EtapaConversacion.NUEVO:
-            return self._handle_nuevo(session, mensaje)
+            respuesta = self._handle_nuevo(session, mensaje)
 
         # ── Descubrimiento de necesidad ──
-        if session.etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
-            return self._wrap_ia(
+        elif session.etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
+            respuesta = self._wrap_ia(
                 self._handle_descubrimiento(session, mensaje),
                 session, mensaje,
             )
 
         # ── Calificación ──
-        if session.etapa == EtapaConversacion.CALIFICANDO:
-            return self._wrap_ia(
+        elif session.etapa == EtapaConversacion.CALIFICANDO:
+            respuesta = self._wrap_ia(
                 self._handle_calificacion(session, mensaje),
                 session, mensaje,
             )
 
         # ── Generación de valor ──
-        if session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
-            return self._wrap_ia(
+        elif session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
+            respuesta = self._wrap_ia(
                 self._handle_valor(session, mensaje),
                 session, mensaje,
             )
 
         # ── Manejo de objeciones ──
-        if session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
-            return self._wrap_ia(
+        elif session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
+            respuesta = self._wrap_ia(
                 self._handle_objeciones(session, mensaje),
                 session, mensaje,
             )
 
         # ── Intento de cierre ──
-        if session.etapa == EtapaConversacion.INTENTANDO_CIERRE:
-            return self._wrap_ia(
+        elif session.etapa == EtapaConversacion.INTENTANDO_CIERRE:
+            respuesta = self._wrap_ia(
                 self._handle_cierre(session, mensaje),
                 session, mensaje,
             )
 
-        # ── Calificado / Derivado ──
-        return (
-            f"Gracias {lead.nombre or ''} por tu consulta. "
-            "Un asesor se comunicará pronto con vos. 😊"
-        )
+        else:
+            respuesta = (
+                f"Gracias {lead.nombre or ''} por tu consulta. "
+                "Un asesor se comunicará pronto con vos. 😊"
+            )
+
+        # DB: guardar lead y mensaje
+        if self._db_enabled:
+            self._guardar_lead_en_db(telegram_id, lead, session)
+            self._guardar_mensaje_en_db(telegram_id, mensaje, respuesta, session)
+
+        return respuesta
 
     # ─────────────────────────────────────────
     # Handlers por etapa
@@ -433,3 +462,73 @@ class ConversationManager:
             mensaje_cliente=mensaje,
             respuesta_fallback=respuesta_logica,
         )
+
+    # ─────────────────────────────────────────
+    # DB helpers
+    # ─────────────────────────────────────────
+
+    def _cargar_lead_desde_db(self, telegram_id: int, session: UserSession) -> None:
+        """Carga el lead persistido desde la DB si existe."""
+        try:
+            db = self._db_factory()
+            try:
+                lead_repo = LeadRepository(db)
+                lead_db = lead_repo.buscar_por_telegram_id(telegram_id)
+                if lead_db is not None:
+                    lead_domain = lead_repo.db_a_lead_domain(lead_db)
+                    session.lead = lead_domain
+                    if lead_db.etapa_conversacion:
+                        try:
+                            session.etapa = EtapaConversacion(lead_db.etapa_conversacion)
+                        except ValueError:
+                            pass
+                    logger.debug("Lead cargado desde DB: telegram_id=%s", telegram_id)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Error cargando lead desde DB: %s", e)
+
+    def _guardar_lead_en_db(
+        self, telegram_id: int, lead: Lead, session: UserSession
+    ) -> None:
+        """Guarda o actualiza el lead en la DB."""
+        try:
+            db = self._db_factory()
+            try:
+                lead_repo = LeadRepository(db)
+                lead_db = lead_repo.buscar_por_telegram_id(telegram_id)
+                if lead_db is None:
+                    lead_db = lead_repo.crear_lead(telegram_id)
+                lead_repo.lead_domain_a_db(lead, lead_db)
+                lead_db.etapa_conversacion = session.etapa.value
+                lead_repo.actualizar_lead(lead_db)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Error guardando lead en DB: %s", e)
+
+    def _guardar_mensaje_en_db(
+        self,
+        telegram_id: int,
+        mensaje: str,
+        respuesta: str,
+        session: UserSession,
+    ) -> None:
+        """Guarda el intercambio de mensajes en la DB."""
+        try:
+            db = self._db_factory()
+            try:
+                lead_repo = LeadRepository(db)
+                lead_db = lead_repo.buscar_por_telegram_id(telegram_id)
+                if lead_db is not None:
+                    conv_repo = ConversationRepository(db)
+                    conv_repo.guardar_mensaje(
+                        lead_id=lead_db.id,
+                        mensaje_cliente=mensaje,
+                        respuesta_sofia=respuesta,
+                        etapa=session.etapa.value,
+                    )
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Error guardando mensaje en DB: %s", e)
