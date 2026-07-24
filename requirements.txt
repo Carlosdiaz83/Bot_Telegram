@@ -1,0 +1,27 @@
+# Health Advisor AI
+# =================
+# Dependencias del proyecto.
+# Mantener esta lista ordenada alfabéticamente.
+# Usar pip-compile para generar requirements.lock (dev) o Poetry/poetry.lock (prod).
+
+# --- Core ---
+# python-telegram-bot>=21,<22
+# openai>=1.0,<2.0
+# langchain>=0.3,<1.0
+
+# --- Database ---
+# sqlalchemy>=2.0,<3.0
+# alembic>=1.13,<2.0
+
+# --- Utilities ---
+# pydantic>=2.0,<3.0
+# python-dotenv>=1.0,<2.0
+# pillow>=10.0,<11.0
+
+# --- OCR ---
+# pytesseract>=0.3,<1.0
+
+# --- Dev / Test ---
+# pytest>=8.0,<9.0
+# pytest-asyncio>=0.23,<1.0
+# ruff>=0.5,<1.0

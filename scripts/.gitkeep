@@ -1,0 +1,4 @@
+# Scripts — Health Advisor AI
+# ============================
+# Scripts utilitarios: migraciones, seeds, limpieza de datos, etc.
+# Ejecutar desde la raíz del proyecto: python scripts/<script>.py
