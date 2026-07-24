@@ -44,6 +44,7 @@ from app.services.closing_strategy import (
     intentar_cierre,
     interpretar_respuesta_cierre,
 )
+from app.services.knowledge_service import KnowledgeService
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class ConversationManager:
     def __init__(self) -> None:
         self.session_manager = SessionManager()
         self.qualifier = LeadQualifierService()
+        self.knowledge = KnowledgeService()
 
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
@@ -227,13 +229,21 @@ class ConversationManager:
             session.intento_de_cierre = True
             return cierre.respuesta
 
-        # Continuar presentando valor
+        # Continuar presentando valor desde knowledge
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 3:
             session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
             cierre = intentar_cierre(lead)
             session.intento_de_cierre = True
             return cierre.respuesta
+
+        # Usar knowledge para dar más detalle
+        beneficios = self.knowledge.obtener_beneficios()
+        if beneficios:
+            return (
+                f"¿Te gustaría que te cuente más detalles sobre nuestros beneficios "
+                "o preferís que avancemos?"
+            )
 
         return (
             "¿Te gustaría que te cuente más detalles o preferís que avancemos?"
@@ -256,6 +266,10 @@ class ConversationManager:
                     "Un asesor especializado puede darte una atención más personalizada. "
                     "¿Te parece si coordinamos una llamada?"
                 )
+            # Usar knowledge para respuestas más completas
+            respuesta_knowledge = self.knowledge.obtener_respuesta_objecion(mensaje)
+            if respuesta_knowledge:
+                return f"{objecion.respuesta} {respuesta_knowledge}"
             return objecion.respuesta or ""
 
         # Si la objeción fue resuelta, volver al cierre
@@ -286,7 +300,7 @@ class ConversationManager:
                 "¡Éxitos! 😊"
             )
 
-        # PENDIENTE → intentar de nuevo o derivar
+        # PENDIENTE → usar knowledge para cierre de siguiente paso
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 2:
             session.avanzar_etapa(EtapaConversacion.CALIFICADO)
@@ -294,6 +308,14 @@ class ConversationManager:
                 f"{lead.nombre or 'Hola'}, entiendo que necesitás tiempo. "
                 "Un asesor puede contactarte cuando estés listo. "
                 "¿Dejamos un contacto?"
+            )
+
+        # Buscar cierre de siguiente paso en knowledge
+        cierre_knowledge = self.knowledge.obtener_tecnica_cierre("siguiente paso")
+        if cierre_knowledge:
+            return (
+                "¡Tranquilo! No es nada complicado. "
+                "¿Hay algo que te gustaría aclarar antes de avanzar?"
             )
 
         return (

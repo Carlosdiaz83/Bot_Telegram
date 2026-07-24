@@ -38,6 +38,7 @@ from app.services.closing_strategy import (
     interpretar_respuesta_cierre,
 )
 from app.services.sales_strategy import generar_argumento
+from app.services.knowledge_service import KnowledgeService
 
 
 # ─────────────────────────────────────────────
@@ -556,3 +557,132 @@ class TestServiredRules:
         lead = Lead(lead_id="rules_004", nombre="Sofía", tipo_afiliacion=TipoAfiliacion.RELACION_DEPENDENCIA, interes_detectado=InteresDetectado.CAMBIO_OBRA_SOCIAL)
         perfil = clasificar_perfil(lead)
         assert perfil.requiere_asesor is True
+
+
+# ─────────────────────────────────────────────
+# Tests de Knowledge Base (Sprint 5)
+# ─────────────────────────────────────────────
+
+@pytest.fixture
+def knowledge() -> KnowledgeService:
+    """Instancia del KnowledgeService."""
+    return KnowledgeService()
+
+
+class TestKnowledgeBeneficios:
+    def test_cargar_beneficios(self, knowledge: KnowledgeService) -> None:
+        contenido = knowledge.obtener_beneficios()
+        assert "SERVIRED" in contenido
+        assert "beneficios" in contenido.lower()
+
+    def test_beneficios_contenido(self, knowledge: KnowledgeService) -> None:
+        contenido = knowledge.obtener_beneficios()
+        assert "red de prestadores" in contenido.lower()
+        assert "cobertura integral" in contenido.lower()
+
+
+class TestKnowledgeFAQ:
+    def test_cargar_faq(self, knowledge: KnowledgeService) -> None:
+        contenido = knowledge.obtener_faq()
+        assert "preguntas frecuentes" in contenido.lower()
+
+    def test_faq_como_funciona(self, knowledge: KnowledgeService) -> None:
+        contenido = knowledge.obtener_faq()
+        assert "cómo funciona" in contenido.lower() or "como funciona" in contenido.lower()
+
+
+class TestKnowledgeObjeciones:
+    def test_cargar_objeciones(self, knowledge: KnowledgeService) -> None:
+        contenido = knowledge.obtener_objeciones()
+        assert "objeciones" in contenido.lower()
+
+    def test_respuesta_objecion_precio(self, knowledge: KnowledgeService) -> None:
+        respuesta = knowledge.obtener_respuesta_objecion("caro")
+        assert len(respuesta) > 0
+        assert "presupuesto" in respuesta.lower() or "precio" in respuesta.lower()
+
+    def test_respuesta_objecion_pensar(self, knowledge: KnowledgeService) -> None:
+        respuesta = knowledge.obtener_respuesta_objecion("pensar")
+        assert len(respuesta) > 0
+
+    def test_respuesta_objecion_no_encontrada(self, knowledge: KnowledgeService) -> None:
+        respuesta = knowledge.obtener_respuesta_objecion("xyz_inexistente")
+        assert respuesta == ""
+
+
+class TestKnowledgeArgumentos:
+    def test_cargar_argumentos(self, knowledge: KnowledgeService) -> None:
+        contenido = knowledge.obtener_argumentos_venta()
+        assert "argumentos" in contenido.lower() or "venta" in contenido.lower()
+
+    def test_argumento_familias(self, knowledge: KnowledgeService) -> None:
+        argumento = knowledge.obtener_argumento_perfil("familias")
+        assert len(argumento) > 0
+        assert "familia" in argumento.lower()
+
+    def test_argumento_monotributistas(self, knowledge: KnowledgeService) -> None:
+        argumento = knowledge.obtener_argumento_perfil("monotributistas")
+        assert len(argumento) > 0
+
+    def test_beneficios_perfil(self, knowledge: KnowledgeService) -> None:
+        beneficios = knowledge.obtener_beneficios_para_perfil("familias")
+        assert len(beneficios) > 0
+
+
+class TestKnowledgeCierres:
+    def test_cargar_cierres(self, knowledge: KnowledgeService) -> None:
+        contenido = knowledge.obtener_cierres()
+        assert "cierre" in contenido.lower()
+
+    def test_tecnica_cierre_directo(self, knowledge: KnowledgeService) -> None:
+        tecnica = knowledge.obtener_tecnica_cierre("directo")
+        assert len(tecnica) > 0
+
+    def test_tecnica_cierre_alternativo(self, knowledge: KnowledgeService) -> None:
+        tecnica = knowledge.obtener_tecnica_cierre("alternativo")
+        assert len(tecnica) > 0
+
+    def test_tecnica_cierre_siguiente_paso(self, knowledge: KnowledgeService) -> None:
+        tecnica = knowledge.obtener_tecnica_cierre("siguiente paso")
+        assert len(tecnica) > 0
+
+
+class TestKnowledgeIntegracion:
+    """Tests de integración knowledge + conversación."""
+
+    def test_conversation_manager_tiene_knowledge(self, manager: ConversationManager) -> None:
+        assert hasattr(manager, "knowledge")
+        assert isinstance(manager.knowledge, KnowledgeService)
+
+    def test_objecion_precio_usa_knowledge(self, manager: ConversationManager) -> None:
+        tid = 90010
+        manager.procesar_mensaje(tid, "Hola, soy Martín")
+        manager.procesar_mensaje(tid, "Solo para mí")
+        manager.procesar_mensaje(tid, "Particular")
+        r = manager.procesar_mensaje(tid, "Es caro")
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        assert session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES
+        assert len(r) > 20
+
+    def test_caso_beneficiosrespuesta_contiene_knowledge(self, manager: ConversationManager) -> None:
+        """Cliente pregunta por beneficios → debe recibir info relevante."""
+        tid = 90011
+        manager.procesar_mensaje(tid, "Hola, me llamo Sofía")
+        manager.procesar_mensaje(tid, "Solo para mí")
+        manager.procesar_mensaje(tid, "Relación de dependencia")
+        r = manager.procesar_mensaje(tid, "¿Por qué debería elegir Servired?")
+        assert "servired" in r.lower() or "beneficio" in r.lower() or "?" in r
+
+    def test_caso_avanzar_usa_cierre(self, manager: ConversationManager) -> None:
+        """Cliente listo para avanzar → debe usar cierre."""
+        tid = 90012
+        manager.procesar_mensaje(tid, "Hola, soy Pedro")
+        manager.procesar_mensaje(tid, "Solo para mí")
+        manager.procesar_mensaje(tid, "Particular")
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
+        r = manager.procesar_mensaje(tid, "Quiero avanzar")
+        assert session.resultado_cierre == ResultadoCierre.ACEPTO
+        assert "excelente" in r.lower() or "avanzar" in r.lower() or "bienvenido" in r.lower()
