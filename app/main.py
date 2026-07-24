@@ -2,7 +2,7 @@
 Health Advisor AI — Entry Point
 ================================
 Punto de entrada de la aplicación.
-Actualmente solo contiene la estructura; la lógica del bot se implementará después.
+Carga la configuración, configura logging e inicia el bot de Telegram.
 
 Uso:
     python -m app.main
@@ -10,11 +10,31 @@ Uso:
 
 from __future__ import annotations
 
+import sys
+
+from app.config.settings import BotConfig
+from app.telegram.bot import TelegramBot
+from app.utils.logging_config import setup_logging
+
 
 def main() -> None:
-    """Inicia el bot de Telegram."""
-    print("Health Advisor AI — estructura creada correctamente.")
-    print("Próximo paso: implementar la lógica del bot en app/telegram/")
+    """Punto de entrada principal."""
+    # 1. Cargar configuración desde .env
+    try:
+        config = BotConfig.from_env()
+    except ValueError as e:
+        print(f"Error de configuración: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # 2. Configurar logging
+    setup_logging(
+        level=config.log_level,
+        log_to_file=config.app_debug,
+    )
+
+    # 3. Iniciar bot
+    bot = TelegramBot(config)
+    bot.run()
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
 # Usar pip-compile para generar requirements.lock (dev) o Poetry/poetry.lock (prod).
 
 # --- Core ---
-# python-telegram-bot>=21,<22
+python-telegram-bot>=22,<23
 # openai>=1.0,<2.0
 # langchain>=0.3,<1.0
 
@@ -14,8 +14,8 @@
 # alembic>=1.13,<2.0
 
 # --- Utilities ---
-# pydantic>=2.0,<3.0
-# python-dotenv>=1.0,<2.0
+pydantic>=2.0,<3.0
+python-dotenv>=1.0,<2.0
 # pillow>=10.0,<11.0
 
 # --- OCR ---

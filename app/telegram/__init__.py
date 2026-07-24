@@ -1,3 +1,15 @@
-# Módulo: Telegram
-# Handlers, middlewares, keyboards y conexión con la API de Telegram.
-# Separado de la lógica de negocio para mantener Clean Architecture.
+"""
+Módulo Telegram — Conexión con la API de Telegram.
+
+Uso:
+    from app.telegram import TelegramBot
+    from app.config import BotConfig
+
+    config = BotConfig.from_env()
+    bot = TelegramBot(config)
+    bot.run()
+"""
+
+from app.telegram.bot import TelegramBot
+
+__all__ = ["TelegramBot"]
