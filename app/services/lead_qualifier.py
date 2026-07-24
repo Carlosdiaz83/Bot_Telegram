@@ -1,9 +1,9 @@
 """
 Servicio de calificación comercial de leads (Lead Qualifier).
 
-Orquesta el flujo de recolección de datos de un prospecto comercial.
-No genera texto directamente — devuelve estados estructurados que
-serán interpretados por la capa de IA para generar la respuesta.
+Orquesta el flujo de recolección de datos de un prospecto comercial
+para SERVIRED. No genera texto directamente — devuelve estados
+estructurados que serán interpretados por la capa de IA.
 
 Responsabilidades:
     - Detectar la intención del cliente a partir de su mensaje.
@@ -28,6 +28,8 @@ from app.models.lead import (
     EstadoComercial,
     InteresDetectado,
     Lead,
+    NecesidadPrincipal,
+    PrioridadCliente,
     TipoAfiliacion,
 )
 
@@ -45,9 +47,9 @@ class QualificationResult:
 
     Attributes:
         estado: Estado comercial actual del lead.
-        proxima_pregunta: Clave de la siguiente pregunta a realizar (o None si está completo).
+        proxima_pregunta: Clave de la siguiente pregunta (o None si completo).
         lead: Referencia al lead actualizado.
-        listo_para_derivar: True si el lead tiene suficiente información para un asesor.
+        listo_para_derivar: True si el lead tiene suficiente información.
         datos_extraidos: Campos que se actualizaron con este mensaje.
     """
     estado: EstadoComercial
@@ -61,19 +63,17 @@ class QualificationResult:
 # Clasificador de intención (sin IA)
 # ─────────────────────────────────────────────
 
-# Palabras clave para clasificar intención
-# Orden: EMPRESA y MONOTRIBUTO antes de COBERTURA para evitar falsos positivos
 _INTENCION_PALABRAS: dict[InteresDetectado, list[str]] = {
-    InteresDetectado.PRECIO: [
-        "cuánto", "cuanto", "precio", "costo", "costa", "vale", "valor",
-        "platita", "plata", "dinero", "pagar",
+    InteresDetectado.PRECIOS: [
+        "cuánto", "cuanto", "precio", "precios", "costo", "costa", "vale",
+        "valor", "platita", "plata", "dinero", "pagar",
+    ],
+    InteresDetectado.BENEFICIOS: [
+        "beneficio", "beneficios", "ventajas", "qué incluye", "que incluye",
+        "qué offerce", "que offerce", "servicios",
     ],
     InteresDetectado.EMPRESA: [
-        "empresa", "empleados", "empleador", "comercio", "local",
-        "negocio",
-    ],
-    InteresDetectado.MONOTRIBUTO: [
-        "monotributo", "monotributista", "monotribut",
+        "empresa", "empleados", "empleador", "comercio", "local", "negocio",
     ],
     InteresDetectado.CAMBIO_OBRA_SOCIAL: [
         "cambiarme", "cambiar", "cambio", "otra obra", "nueva obra",
@@ -81,7 +81,11 @@ _INTENCION_PALABRAS: dict[InteresDetectado, list[str]] = {
     ],
     InteresDetectado.COBERTURA: [
         "cubrir", "cubre", "cobertura", "incluye", "qué cubre",
-        "que cubre", "servicio", "plan", "planes",
+        "que cubre", "qué tapa", "que tapa",
+    ],
+    InteresDetectado.AFILIACION: [
+        "afiliarme", "afiliar", "afiliación", "afiliacion", "darme de alta",
+        "querés afiliar", "busco obra social", "sin obra",
     ],
     InteresDetectado.INFORMACION_GENERAL: [
         "información", "informacion", "saber", "conocer", "qué es",
@@ -94,11 +98,8 @@ def clasificar_intencion(texto: str) -> InteresDetectado:
     """
     Clasifica la intención del cliente a partir de su mensaje.
 
-    Utiliza匹配 por palabras clave (sin IA) para determinar
-    el interés principal del cliente.
-
     Args:
-        texto: Mensaje del cliente en minúsculas.
+        texto: Mensaje del cliente.
 
     Returns:
         Interés detectado (default: INFORMACION_GENERAL).
@@ -118,15 +119,7 @@ def clasificar_intencion(texto: str) -> InteresDetectado:
 # ─────────────────────────────────────────────
 
 def _extraer_nombre(texto: str) -> str | None:
-    """
-    Extrae el nombre del mensaje del cliente.
-
-    Maneja patrones como:
-        - "Me llamo Juan"
-        - "Soy María"
-        - "Juan"
-        - "Mi nombre es Carlos"
-    """
+    """Extrae nombre del mensaje. Patrones: Me llamo X, Soy X, Mi nombre es X."""
     patrones = [
         r"(?:me llamo|soy|mi nombre es|nombre)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)",
     ]
@@ -138,14 +131,7 @@ def _extraer_nombre(texto: str) -> str | None:
 
 
 def _extraer_edad(texto: str) -> int | None:
-    """
-    Extrae la edad del mensaje.
-
-    Maneja patrones como:
-        - "Tengo 30 años"
-        - "30 años"
-        - "30"
-    """
+    """Extrae edad del mensaje. Patrones: Tengo 30 años, 30 años."""
     patrones = [
         r"(?:tengo|edad|años?)\s*(\d{1,3})",
         r"(\d{1,3})\s*(?:años?)",
@@ -160,14 +146,7 @@ def _extraer_edad(texto: str) -> int | None:
 
 
 def _extraer_localidad(texto: str) -> str | None:
-    """
-    Extrae la localidad del mensaje.
-
-    Maneja patrones como:
-        - "Soy de Córdoba"
-        - "Vivo en Buenos Aires"
-        - "Villa Carlos Paz"
-    """
+    """Extrae localidad. Patrones: Soy de X, Vivo en X."""
     patrones = [
         r"(?:soy de|vivo en|localidad|ciudad)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)",
     ]
@@ -179,15 +158,7 @@ def _extraer_localidad(texto: str) -> str | None:
 
 
 def _detectar_tipo_afiliacion(texto: str) -> TipoAfiliacion | None:
-    """
-    Detecta el tipo de afiliación a partir del mensaje.
-
-    Args:
-        texto: Mensaje del cliente.
-
-    Returns:
-        Tipo de afiliación detectado o None.
-    """
+    """Detecta tipo de afiliación: relación dependencia, monotributo, particular, empresa."""
     texto_lower = texto.lower()
 
     if any(p in texto_lower for p in ["monotributo", "monotributista", "monotribut"]):
@@ -203,12 +174,7 @@ def _detectar_tipo_afiliacion(texto: str) -> TipoAfiliacion | None:
 
 
 def _detectar_grupo_familiar(texto: str) -> dict | None:
-    """
-    Detecta la composición del grupo familiar.
-
-    Returns:
-        Dict con conyuge, hijos, cantidad_hijos o None.
-    """
+    """Detecta composición del grupo familiar (conyuge, hijos, cantidad)."""
     texto_lower = texto.lower()
 
     tiene_conyuge = any(p in texto_lower for p in [
@@ -217,19 +183,29 @@ def _detectar_grupo_familiar(texto: str) -> dict | None:
     ])
 
     tiene_hijos = any(p in texto_lower for p in [
-        "hijo", "hijos", "hija", "hijas", "nenes", "nena", "nenes",
+        "hijo", "hijos", "hija", "hijas", "nenes", "nena",
         "chicos", "chicas", "menores",
     ])
 
     cantidad_hijos = 0
     if tiene_hijos:
-        # Intentar extraer cantidad de hijos
+        # Intentar extraer cantidad numérica
         match = re.search(r"(\d+)\s*(?:hijos?|hijas?|nenes?|chicos?|menores?)", texto_lower)
         if match:
             cantidad_hijos = int(match.group(1))
         else:
-            # Asumir al menos 1 si menciona hijos sin cantidad
-            cantidad_hijos = 1
+            # Intentar extraer cantidad en palabras
+            palabras_a_numeros = {
+                "un": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4,
+                "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9,
+            }
+            for palabra, num in palabras_a_numeros.items():
+                if re.search(rf"{palabra}\s+(?:hijos?|hijas?|nenes?|chicos?|menores?)", texto_lower):
+                    cantidad_hijos = num
+                    break
+            else:
+                # Asumir al menos 1 si menciona hijos sin cantidad
+                cantidad_hijos = 1
 
     if not tiene_conyuge and not tiene_hijos:
         return None
@@ -242,12 +218,7 @@ def _detectar_grupo_familiar(texto: str) -> dict | None:
 
 
 def _detectar_tiene_aportes(texto: str) -> bool | None:
-    """
-    Detecta si el cliente menciona tener aportes.
-
-    Returns:
-        True si tiene aportes, False si no, None si no se detecta.
-    """
+    """Detecta si el cliente tiene aportes."""
     texto_lower = texto.lower()
 
     if any(p in texto_lower for p in ["tengo aportes", "con aportes", "aportes"]):
@@ -259,12 +230,7 @@ def _detectar_tiene_aportes(texto: str) -> bool | None:
 
 
 def _detectar_recibo_sueldo(texto: str) -> bool | None:
-    """
-    Detecta si el cliente menciona tener recibo de sueldo.
-
-    Returns:
-        True si tiene recibo, False si no, None si no se detecta.
-    """
+    """Detecta si tiene recibo de sueldo."""
     texto_lower = texto.lower()
 
     if any(p in texto_lower for p in ["recibo de sueldo", "recibo", "sueldo", "boleta"]):
@@ -275,22 +241,34 @@ def _detectar_recibo_sueldo(texto: str) -> bool | None:
     return None
 
 
-def _detectar_respuesta_bool(texto: str) -> bool | None:
-    """
-    Detecta respuestas afirmativas o negativas simples.
+def _detectar_necesidad_principal(texto: str) -> NecesidadPrincipal | None:
+    """Detecta la necesidad principal del cliente."""
+    texto_lower = texto.lower()
 
-    Returns:
-        True si afirmativo, False si negativo, None si no se detecta.
-    """
-    texto_lower = texto.lower().strip()
+    if any(p in texto_lower for p in ["precio", "costo", "económico", "economico", "barato", "accesible"]):
+        return NecesidadPrincipal.PRECIO
+    if any(p in texto_lower for p in ["beneficio", "beneficios", "ventajas", "qué ofrece"]):
+        return NecesidadPrincipal.BENEFICIOS
+    if any(p in texto_lower for p in ["familia", "familiar", "hijos", "esposa", "pareja"]):
+        return NecesidadPrincipal.COBERTURA_FAMILIAR
+    if any(p in texto_lower for p in ["hospital", "clínica", "clinica", "médico", "medico", "doctor", "prestador"]):
+        return NecesidadPrincipal.ACCESO_PRESTADORES
 
-    afirmativas = ["sí", "si", "claro", "obvio", "dale", "bueno", "ok", "s", "yes", "afirmativo"]
-    negativas = ["no", "nah", "nop", "para nada", "negativo"]
+    return None
 
-    if texto_lower in afirmativas:
-        return True
-    if texto_lower in negativas:
-        return False
+
+def _detectar_prioridad_cliente(texto: str) -> PrioridadCliente | None:
+    """Detecta la prioridad del cliente al elegir cobertura."""
+    texto_lower = texto.lower()
+
+    if any(p in texto_lower for p in ["económico", "economico", "barato", "accesible", "más barato", "mas barato"]):
+        return PrioridadCliente.ECONOMICO
+    if any(p in texto_lower for p in ["completo", "todo", "mejor", "premium"]):
+        return PrioridadCliente.COMPLETO
+    if any(p in texto_lower for p in ["familia", "familiar", "hijos", "esposa"]):
+        return PrioridadCliente.FAMILIAR
+    if any(p in texto_lower for p in ["rápido", "rapido", "ya", "urgente", "sin demora"]):
+        return PrioridadCliente.RAPIDEZ
 
     return None
 
@@ -301,29 +279,21 @@ def _detectar_respuesta_bool(texto: str) -> bool | None:
 
 class LeadQualifierService:
     """
-    Servicio de calificación comercial de leads.
+    Servicio de calificación comercial de leads para SERVIRED.
 
-    Implementa un flujo stateful que:
-    1. Recibe el mensaje del cliente y el lead actual.
-    2. Extrae información del mensaje.
-    3. Actualiza el lead con los datos detectados.
-    4. Determina la siguiente pregunta (o si el lead está listo).
+    Implementa un flujo stateful de 9 pasos:
+    1. Nombre
+    2. Motivo de consulta (interés)
+    3. Situación actual (tipo afiliación)
+    4. Aportes (si corresponde)
+    5. Grupo familiar
+    6. Cantidad de integrantes
+    7. Localidad
+    8. Edad
+    9. Necesidad principal / prioridad
 
     No genera texto — devuelve QualificationResult con estado estructurado.
     """
-
-    # Orden de preguntas del flujo de calificación
-    FLUJO_PREGUNTAS: list[str] = [
-        "nombre",
-        "tipo_afiliacion",
-        "tiene_aportes",
-        "recibo_sueldo",
-        "grupo_familiar",
-        "cantidad_hijos",
-        "cantidad_integrantes",
-        "localidad",
-        "edad",
-    ]
 
     def process_message(self, lead: Lead, mensaje: str) -> QualificationResult:
         """
@@ -363,7 +333,7 @@ class LeadQualifierService:
             logger.info("Lead %s calificado — listo para derivar", lead.lead_id)
 
         logger.debug(
-            "Lead %s — estado: %s, proxima_pregunta: %s, datos_extraidos: %s",
+            "Lead %s — estado: %s, proxima: %s, extraidos: %s",
             lead.lead_id,
             lead.estado_comercial.value,
             proxima_pregunta,
@@ -379,12 +349,7 @@ class LeadQualifierService:
         )
 
     def _extraer_datos(self, lead: Lead, mensaje: str) -> list[str]:
-        """
-        Extrae información del mensaje y la asigna al lead.
-
-        Returns:
-            Lista de nombres de campos que fueron actualizados.
-        """
+        """Extrae información del mensaje y la asigna al lead."""
         datos_extraidos: list[str] = []
 
         # Nombre
@@ -440,63 +405,74 @@ class LeadQualifierService:
                 )
                 datos_extraidos.append("grupo_familiar")
 
+        # Necesidad principal
+        if lead.necesidad_principal is None:
+            necesidad = _detectar_necesidad_principal(mensaje)
+            if necesidad:
+                lead.necesidad_principal = necesidad
+                datos_extraidos.append("necesidad_principal")
+
+        # Prioridad del cliente
+        if lead.prioridad_cliente is None:
+            prioridad = _detectar_prioridad_cliente(mensaje)
+            if prioridad:
+                lead.prioridad_cliente = prioridad
+                datos_extraidos.append("prioridad_cliente")
+
         return datos_extraidos
 
     def _determinar_siguiente_pregunta(self, lead: Lead) -> str | None:
         """
         Determina cuál es la siguiente pregunta según la información que falta.
 
-        Returns:
-            Clave de la pregunta pendiente o None si toda la información está completa.
+        Flujo:
+        1. nombre
+        2. interes_detectado (motivo de consulta)
+        3. tipo_afiliacion (situación actual)
+        4. tiene_aportes (si corresponde)
+        5. grupo_familiar
+        6. cantidad_hijos / cantidad_integrantes
+        7. localidad
+        8. edad
+        9. necesidad_principal / prioridad_cliente
         """
+        # 1. Nombre
         if lead.nombre is None:
             return "nombre"
+
+        # 2. Motivo de consulta
+        if lead.interes_detectado is None:
+            return "interes_detectado"
+
+        # 3. Situación actual
         if lead.tipo_afiliacion is None:
             return "tipo_afiliacion"
-        if lead.tiene_aportes is None:
-            return "tiene_aportes"
 
-        # Si tiene relación de dependencia, preguntar por recibo
+        # 4. Aportes (solo si relación de dependencia)
         if (
             lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA
-            and lead.tiene_recibo_sueldo is None
+            and lead.tiene_aportes is None
         ):
-            return "recibo_sueldo"
+            return "tiene_aportes"
 
+        # 5. Grupo familiar
         if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
             return "grupo_familiar"
 
+        # 6. Cantidad de hijos (si mencionó hijos)
         if lead.grupo_familiar.hijos and lead.cantidad_hijos == 0:
             return "cantidad_hijos"
 
-        if lead.cantidad_integrantes <= 1:
-            return "cantidad_integrantes"
-
+        # 7. Localidad
         if lead.localidad is None:
             return "localidad"
+
+        # 8. Edad
         if lead.edad is None:
             return "edad"
 
+        # 9. Necesidad principal
+        if lead.necesidad_principal is None:
+            return "necesidad_principal"
+
         return None
-
-    def _verificar_listo_para_derivar(self, lead: Lead) -> bool:
-        """
-        Verifica si el lead tiene suficiente información para ser derivado a un asesor.
-
-        Criterios mínimos:
-            - Tiene nombre
-            - Tiene tipo de afiliación
-            - Ha respondido sobre grupo familiar (solo, con pareja, o con hijos)
-        """
-        # Verificar que el usuario respondió sobre grupo familiar
-        grupo_familiar_respondido = (
-            lead.grupo_familiar.conyuge
-            or lead.grupo_familiar.hijos
-            or lead.cantidad_integrantes == 1  # Solo titular
-        )
-
-        return (
-            lead.nombre is not None
-            and lead.tipo_afiliacion is not None
-            and grupo_familiar_respondido
-        )

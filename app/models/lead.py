@@ -7,6 +7,7 @@ dependencias de base de datos ni frameworks.
 
 Este modelo será utilizado por:
     - LeadQualifierService (lógica de calificación)
+    - ServiredRules (clasificación de perfil)
     - IA (para contexto de conversación)
     - CRM (para persistencia futura)
 """
@@ -19,24 +20,17 @@ from pydantic import BaseModel, Field
 
 
 # ─────────────────────────────────────────────
-# Enums — Valores permitidos
+# Enums — Datos generales
 # ─────────────────────────────────────────────
-
-class TipoAfiliacion(str, Enum):
-    """Tipo de afiliación del cliente."""
-    RELACION_DEPENDENCIA = "relacion_dependencia"
-    MONOTRIBUTO = "monotributo"
-    PARTICULAR = "particular"
-    EMPRESA = "empresa"
-
 
 class InteresDetectado(str, Enum):
     """Interés principal detectado en la consulta inicial."""
-    PRECIO = "precio"
+    PRECIOS = "precios"
+    BENEFICIOS = "beneficios"
     COBERTURA = "cobertura"
     CAMBIO_OBRA_SOCIAL = "cambio_obra_social"
-    MONOTRIBUTO = "monotributo"
     EMPRESA = "empresa"
+    AFILIACION = "afiliacion"
     INFORMACION_GENERAL = "informacion_general"
 
 
@@ -47,6 +41,34 @@ class EstadoComercial(str, Enum):
     CALIFICADO = "calificado"
     DERIVADO = "derivado"
     CERRADO = "cerrado"
+
+
+# ─────────────────────────────────────────────
+# Enums — Datos SERVIRED
+# ─────────────────────────────────────────────
+
+class TipoAfiliacion(str, Enum):
+    """Tipo de afiliación del cliente."""
+    RELACION_DEPENDENCIA = "relacion_dependencia"
+    MONOTRIBUTO = "monotributo"
+    PARTICULAR = "particular"
+    EMPRESA = "empresa"
+
+
+class NecesidadPrincipal(str, Enum):
+    """Necesidad principal del cliente al consultar."""
+    PRECIO = "precio"
+    BENEFICIOS = "beneficios"
+    COBERTURA_FAMILIAR = "cobertura_familiar"
+    ACCESO_PRESTADORES = "acceso_prestadores"
+
+
+class PrioridadCliente(str, Enum):
+    """Prioridad o preferencia del cliente al elegir cobertura."""
+    ECONOMICO = "economico"
+    COMPLETO = "completo"
+    FAMILIAR = "familiar"
+    RAPIDEZ = "rapidez"
 
 
 # ─────────────────────────────────────────────
@@ -79,36 +101,52 @@ class Lead(BaseModel):
 
     Attributes:
         lead_id: Identificador único (normalmente el chat_id de Telegram).
+
+        # Datos generales
         nombre: Nombre del cliente.
         edad: Edad del titular.
         localidad: Localidad de residencia.
+        telefono: Teléfono del contacto (preparado para uso futuro).
+        estado_comercial: Estado actual en el funnel de ventas.
+
+        # Intención
+        interes_detectado: Interés principal de la consulta.
+
+        # Datos SERVIRED
         tipo_afiliacion: Tipo de afiliación actual o deseada.
         tiene_aportes: Si cuenta con aportes previos.
-        tiene_recibo_sueldo: Si tiene recibo de sueldo (verifica relación de dependencia).
+        tiene_recibo_sueldo: Si tiene recibo de sueldo.
         grupo_familiar: Composición del grupo familiar.
         cantidad_hijos: Cantidad de hijos a incluir.
         cantidad_integrantes: Total de personas en el grupo familiar.
-        interes_detectado: Interés principal de la consulta.
-        estado_comercial: Estado actual en el funnel de ventas.
+        necesidad_principal: Qué busca el cliente en la cobertura.
+        prioridad_cliente: Qué valora más al elegir cobertura.
     """
     lead_id: str
+
+    # Datos generales
     nombre: str | None = None
     edad: int | None = None
     localidad: str | None = None
+    telefono: str | None = None
+    estado_comercial: EstadoComercial = EstadoComercial.NUEVO
 
-    # Situación laboral
+    # Intención
+    interes_detectado: InteresDetectado | None = None
+
+    # Datos SERVIRED — Situación laboral
     tipo_afiliacion: TipoAfiliacion | None = None
     tiene_aportes: bool | None = None
     tiene_recibo_sueldo: bool | None = None
 
-    # Grupo familiar
+    # Datos SERVIRED — Grupo familiar
     grupo_familiar: GrupoFamiliar = Field(default_factory=GrupoFamiliar)
     cantidad_hijos: int = 0
     cantidad_integrantes: int = 1
 
-    # Interés y estado
-    interes_detectado: InteresDetectado | None = None
-    estado_comercial: EstadoComercial = EstadoComercial.NUEVO
+    # Datos SERVIRED — Perfil
+    necesidad_principal: NecesidadPrincipal | None = None
+    prioridad_cliente: PrioridadCliente | None = None
 
     def calcular_integrantes(self) -> int:
         """

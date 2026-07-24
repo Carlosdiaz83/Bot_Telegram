@@ -4,7 +4,10 @@ Modelos de dominio — Health Advisor AI.
 Entidades puras del dominio, independientes de framework y DB.
 
 Uso:
-    from app.models.lead import Lead, TipoAfiliacion, EstadoComercial
+    from app.models.lead import (
+        Lead, TipoAfiliacion, NecesidadPrincipal,
+        PrioridadCliente, EstadoComercial, InteresDetectado,
+    )
 """
 
 from app.models.lead import (
@@ -12,6 +15,8 @@ from app.models.lead import (
     GrupoFamiliar,
     InteresDetectado,
     Lead,
+    NecesidadPrincipal,
+    PrioridadCliente,
     TipoAfiliacion,
 )
 
@@ -20,5 +25,7 @@ __all__ = [
     "GrupoFamiliar",
     "InteresDetectado",
     "Lead",
+    "NecesidadPrincipal",
+    "PrioridadCliente",
     "TipoAfiliacion",
 ]
