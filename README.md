@@ -1,93 +1,128 @@
-# 🩺 Health Advisor AI
+# 🤖 Sofía Comercial AI
 
-Asesor virtual inteligente de salud y nutrición para Telegram.
+Asistente comercial inteligente para ventas SERVIRED en Telegram.
 
 ## Descripción
 
-Un bot de Telegram que actúa como asesor personal de salud, ofreciendo:
+Sofía es un asistente comercial basado en inteligencia artificial que conversa con potenciales clientes, entiende sus necesidades, presenta valor, maneja objeciones y acompaña el proceso de contratación de SERVIRED (obra social/prepaga).
 
-- **Análisis nutricional** de alimentos e imágenes
-- **Calculadoras** de IMC, TMB y macronutrientes
-- **Recomendaciones** personalizadas según perfil del usuario
-- **OCR** para etiquetas nutricionales y recetas médicas
-- **Seguimiento** de hábitos y progreso del usuario
+### ¿Qué es SERVIRED?
 
-## Lead Qualifier (Sprint 3)
+SERVIRED es una obra social/prepaga que ofrece cobertura de salud para:
 
-### ¿Qué es?
+- Titulares
+- Cónyuges/parejas
+- Hijos menores
 
-El **Lead Qualifier** es un sistema de calificación comercial que evalúa prospectos de clientes interesados en obras sociales/prepagas. Recolecta información estructurada del cliente a través de una conversación y determina cuándo está listo para ser derivado a un asesor humano.
+## Funcionalidades
 
-### ¿Cómo funciona?
+### 🤖 Asistente Conversacional
 
-1. **Clasificación de intención**: Analiza el primer mensaje para detectar el interés (precio, cobertura, cambio, monotributo, empresa).
-2. **Recolección de datos**: Pregunta secuencialmente por nombre, situación laboral, aportes, grupo familiar, localidad y edad.
-3. **Actualización del perfil**: Cada respuesta actualiza el modelo `Lead` con los datos extraídos.
-4. **Detección de listo**: Cuando tiene la información mínima necesaria, marca el lead como `CALIFICADO` y listo para derivar.
+- Bot de Telegram con respuestas naturales
+- Personalidad de asesora comercial (voseo argentino)
+- Manejo de conversaciones多-turno
+- Memoria de conversaciones anteriores
 
-### Uso futuro con IA
+### 📋 Lead Qualification
 
-El LeadQualifierService **no genera texto directamente**. Devuelve estados estructurados que la IA (futuro Sprint) interpretará para generar respuestas naturales al cliente.
+- Calificación automática de prospectos
+- Extracción de datos del cliente (nombre, edad, localidad, etc.)
+- Detección de necesidades principales
+- Clasificación de prioridades (económico, cobertura, calidad)
 
-```
-Entrada IA:  "Quiero precios para mi familia"
-Salida IA:   LeadQualifierService.process_message(lead, mensaje)
-             → QualificationResult(estado=CALIFICANDO, proxima_pregunta="nombre")
-             → IA genera: "¡Perfecto! ¿Cómo te llamás?"
-```
+### 📊 Lead Scoring
 
-### Flujo de calificación
+- Sistema de puntuación automático (0-100)
+- Clasificación de temperatura: frío, tibio, caliente
+- Bonus por datos completos y etapas avanzadas
+- Persistencia en base de datos
 
-```
-Cliente dice intención → Detectar interés → Preguntar nombre
-→ Preguntar tipo afiliación → Preguntar aportes → Preguntar grupo familiar
-→ Calcular integrantes → Preguntar localidad → Preguntar edad
-→ Marcar CALIFICADO → Derivar a asesor
-```
+### 🏢 SERVIRED Rules
 
-### Ejemplo de flujo completo
+- Validación de perfiles (titular, cónyuge, hijos)
+- Detección de casos especiales (empresas, monotributistas)
+- Reglas de cobertura y aportes
 
-| Paso | Mensaje del cliente | Datos extraídos | Siguiente pregunta |
-|------|--------------------|-----------------|--------------------|
-| 1 | "Quiero precios para mi familia" | interes: precio | nombre |
-| 2 | "Me llamo Ana" | nombre: Ana | tipo_afiliacion |
-| 3 | "Soy monotributista" | tipo: monotributo | grupo_familiar |
-| 4 | "Mi esposa y 2 hijos" | conyuge: true, hijos: 2 | — (LISTO) |
+### 📚 Knowledge Base Comercial
 
-### Archivos del módulo
+- Beneficios de SERVIRED por perfil de cliente
+- Preguntas frecuentes (FAQ)
+- Manejo de objeciones comunes
+- Argumentos de venta personalizados
+- Estrategias de cierre
 
-| Archivo | Descripción |
-|---------|-------------|
-| `app/models/lead.py` | Modelo de dominio `Lead` con enums y GrupoFamiliar |
-| `app/services/lead_qualifier.py` | Servicio de calificación con extracción de datos |
-| `tests/test_lead_qualifier.py` | Tests unitarios de los 4 casos solicitados |
+### 💼 Sales Strategy
+
+- Generación de argumentos según perfil
+- Personalización por necesidad y prioridad
+- Manejo de objeciones (precio, tiempo, confianza)
+
+### ✅ Closing Strategy
+
+- Técnicas de cierre directo e indirecto
+- Interpretación de respuestas
+- Próximos pasos claros
+
+### 🗄️ Persistencia de Leads
+
+- SQLite (preparado para PostgreSQL)
+- Historial completo de conversaciones
+- Estados comerciales (11 valores)
+- Timestamps de creación y actualización
+
+### 🖥️ Panel Web Comercial
+
+- Dashboard con estadísticas
+- Lista de leads con filtros
+- Detalle de lead con historial
+- Acciones comerciales (cambiar estado)
 
 ## Arquitectura
 
-El proyecto sigue **Clean Architecture** y principios **SOLID**:
+```
+Cliente Telegram
+       ↓
+   Sofía IA (Groq)
+       ↓
+Conversation Manager
+       ↓
+Lead Qualifier
+       ↓
+Sales Strategy
+       ↓
+Knowledge Servired
+       ↓
+    Database (SQLite)
+```
+
+### Estructura del Proyecto
 
 ```
 Bot_Telegram/
 ├── app/
-│   ├── ai/            → Integración con modelos de LLM
-│   ├── telegram/      → Handlers y conexión con Telegram API
-│   ├── knowledge/     → Base de conocimiento estructurada
-│   ├── calculator/    → Calculadoras nutricionales (IMC, TMB, macros)
-│   ├── ocr/           → Reconocimiento de imágenes (etiquetas, recetas)
-│   ├── crm/           → Gestión de usuarios y seguimiento
-│   ├── config/        → Configuración centralizada (.env, settings)
-│   ├── database/      → Persistencia: ORM, migraciones, repositorios
-│   ├── services/      → Orquestación de lógica de negocio
-│   │   └── lead_qualifier.py  → Calificación comercial de leads
-│   ├── models/        → Entidades de dominio (dataclasses/Pydantic)
-│   │   └── lead.py            → Modelo Lead y enums comerciales
-│   ├── prompts/       → Templates de prompts para IA
-│   ├── utils/         → Helpers: fechas, validación, formato
-│   └── main.py        → Entry point
-├── docs/              → Documentación del proyecto
-├── tests/             → Suite de tests unitarios y de integración
-├── logs/              → Logs de ejecución (gitignored)
-└── scripts/           → Scripts utilitarios (migraciones, seeds, etc.)
+│   ├── ai/                → Integración con Groq (llama-3.3-70b-versatile)
+│   ├── config/            → Configuración centralizada (.env, settings)
+│   ├── crm/               → Gestión de usuarios y seguimiento
+│   ├── database/          → ORM SQLAlchemy, repositorios, migraciones
+│   ├── knowledge/         → Base de conocimiento estructurada
+│   │   └── servired/      → Docs: beneficios, FAQ, objeciones, cierres
+│   ├── models/            → Entidades de dominio (Lead, enums)
+│   ├── panel/             → Panel web FastAPI
+│   ├── prompts/           → Templates de prompts para IA
+│   ├── services/          → Lógica de negocio
+│   │   ├── conversation_manager.py  → Orquestador principal
+│   │   ├── lead_qualifier.py        → Calificación de leads
+│   │   ├── lead_scoring.py          → Scoring y temperatura
+│   │   ├── sales_strategy.py        → Argumentos de venta
+│   │   ├── objection_handler.py     → Manejo de objeciones
+│   │   ├── closing_strategy.py      → Técnicas de cierre
+│   │   ├── session_manager.py       → Sesiones de usuario
+│   │   └── knowledge_service.py     → Servicio de knowledge base
+│   ├── telegram/          → Bot y handlers de Telegram
+│   └── main.py            → Entry point
+├── docs/                  → Documentación
+├── tests/                 → Suite de tests (133 tests)
+└── requirements.txt
 ```
 
 ## Stack
@@ -95,16 +130,11 @@ Bot_Telegram/
 | Capa | Tecnología |
 |------|-----------|
 | Bot | python-telegram-bot v22 |
-| IA | OpenAI API / LangChain (próximo) |
+| IA | Groq API (llama-3.3-70b-versatile) + OpenAI |
 | DB | SQLAlchemy + SQLite (dev) / PostgreSQL (prod) |
 | Validación | Pydantic v2 |
-| OCR | Tesseract (próximo) |
-
-## Requisitos
-
-- Python 3.11+
-- Token de bot de Telegram ([@BotFather](https://t.me/BotFather))
-- API Key de OpenAI (próximo)
+| Panel Web | FastAPI + Jinja2 |
+| Arquitectura | Clean Architecture + SOLID |
 
 ## Instalación
 
@@ -124,19 +154,57 @@ pip install -r requirements.txt
 # Configurar entorno
 copy .env.example .env        # Windows
 # cp .env.example .env        # Linux/Mac
-# Completar TELEGRAM_BOT_TOKEN en .env
+# Completar variables en .env:
+#   TELEGRAM_BOT_TOKEN
+#   GROQ_API_KEY
+#   OPENAI_API_KEY (opcional)
 ```
 
 ## Ejecución
 
 ```bash
+# Bot de Telegram
 python -m app.main
+
+# Panel Web
+python -m app.panel.app
+# Abrir http://127.0.0.1:8000
 ```
 
 ## Tests
 
 ```bash
 pytest -v
+```
+
+**133 tests** cubriendo:
+- Lead Qualifier
+- Lead Scoring
+- Sales Strategy
+- Objection Handler
+- Closing Strategy
+- Knowledge Base
+- AI Integration
+- Panel Web
+- Persistencia
+
+## Flujo de Conversación
+
+```
+1. Cliente escribe → Sofia detecta necesidad
+2. Calificación → Nombre, edad, localidad, tipo afiliación
+3. Lead Scoring → Score + temperatura
+4. Presentación valor → Beneficios personalizados
+5. Manejo objeciones → Respuestas knowledge base
+6. Cierre → Técnica según perfil
+7. Estado → VENDIDO/PERDIDO/SEGUIMIENTO
+```
+
+## Estados Comerciales
+
+```
+NUEVO → CONTACTADO → CALIFICANDO → INTERESADO → OBJECION →
+INTENTANDO_CIERRE → VENDIDO / PERDIDO / SEGUIMIENTO
 ```
 
 ## Licencia
