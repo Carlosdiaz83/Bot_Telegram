@@ -44,6 +44,7 @@ from app.services.objection_handler import (
 from app.services.closing_strategy import (
     intentar_cierre,
     interpretar_respuesta_cierre,
+    recuperar_indeciso,
 )
 from app.services.knowledge_service import KnowledgeService
 from app.services.lead_scoring import LeadScoringService
@@ -368,7 +369,7 @@ class ConversationManager:
                 "¡Éxitos! 😊"
             )
 
-        # PENDIENTE → usar knowledge para cierre de siguiente paso
+        # PENDIENTE → usar recuperación de indecisos
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 2:
             lead.estado_comercial = EstadoComercial.SEGUIMIENTO
@@ -379,18 +380,8 @@ class ConversationManager:
                 "¿Dejamos un contacto?"
             )
 
-        # Buscar cierre de siguiente paso en knowledge
-        cierre_knowledge = self.knowledge.obtener_tecnica_cierre("siguiente paso")
-        if cierre_knowledge:
-            return (
-                "¡Tranquilo! No es nada complicado. "
-                "¿Hay algo que te gustaría aclarar antes de avanzar?"
-            )
-
-        return (
-            "¡Tranquilo! No es nada complicado. "
-            "¿Hay algo que te gustaría aclarar antes de avanzar?"
-        )
+        # Intentar recuperar indeciso
+        return recuperar_indeciso(lead)
 
     # ─────────────────────────────────────────
     # Helpers

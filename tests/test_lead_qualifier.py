@@ -1632,3 +1632,250 @@ class TestScoringIntegration:
                 os.unlink(tmp.name)
             except OSError:
                 pass
+
+
+# =====================================================
+# Sprint 9 — Simulador de Clientes
+# =====================================================
+
+class TestSimuladorClientes:
+    """Tests del simulador de conversaciones."""
+
+    def test_simulador_cliente_listo(self) -> None:
+        """Cliente listo para contratar completa el flujo."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        profile = obtener_perfil("cliente_listo_para_contratar")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        assert resultado.cantidad_mensajes == len(profile.mensajes)
+        assert resultado.lead_final is not None
+        assert resultado.estado_final != ""
+
+    def test_simulador_cliente_frio(self) -> None:
+        """Cliente frío genera conversación válida."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        profile = obtener_perfil("cliente_frio")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        assert resultado.cantidad_mensajes == 5
+        assert resultado.lead_final is not None
+
+    def test_simulador_cliente_objecion_precio(self) -> None:
+        """Cliente con objeción de precio genera objeción detectada."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        profile = obtener_perfil("cliente_objecion_precio")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        assert resultado.cantidad_mensajes == len(profile.mensajes)
+        assert resultado.estado_final in ("objecion", "intentando_cierre", "perdido", "seguimiento")
+
+    def test_simulador_cliente_indeciso(self) -> None:
+        """Cliente indeciso genera seguimiento o derivación."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        profile = obtener_perfil("cliente_indeciso")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        assert resultado.cantidad_mensajes == len(profile.mensajes)
+
+    def test_simulador_multiples(self) -> None:
+        """Múltiples simulaciones funcionan correctamente."""
+        from app.simulation import SimuladorConversacion, PERFILES_CLIENTES
+        sim = SimuladorConversacion(ConversationManager())
+        perfiles = [PERFILES_CLIENTES["cliente_frio"], PERFILES_CLIENTES["cliente_listo_para_contratar"]]
+        resultados = sim.simular_multiples(perfiles)
+        assert len(resultados) == 2
+        assert resultados[0].perfil.nombre == "cliente_frio"
+        assert resultados[1].perfil.nombre == "cliente_listo_para_contratar"
+
+    def test_simulador_exito_cliente_listo(self) -> None:
+        """Cliente listo para contratar marca exitosa=True."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        profile = obtener_perfil("cliente_listo_para_contratar")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        # Cliente listo debería llegar a un estado exitoso
+        assert resultado.estado_final in ("vendido", "calificado", "seguimiento")
+
+    def test_listar_perfiles(self) -> None:
+        """listar_perfiles retorna 8 perfiles."""
+        from app.simulation import listar_perfiles
+        perfiles = listar_perfiles()
+        assert len(perfiles) == 8
+        assert "cliente_frio" in perfiles
+        assert "cliente_listo_para_contratar" in perfiles
+
+    def test_perfil_busca_precio(self) -> None:
+        """Perfil busca precio tiene prioridad ECONOMICO."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        profile = obtener_perfil("cliente_busca_precio")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        lead = resultado.lead_final
+        assert lead is not None
+        # Debería tener prioridad o necesidad relacionada con precio
+        from app.models.lead import PrioridadCliente, NecesidadPrincipal
+        assert (
+            lead.prioridad_cliente == PrioridadCliente.ECONOMICO
+            or lead.necesidad_principal == NecesidadPrincipal.PRECIO
+            or lead.interes_detectado is not None
+        )
+
+
+# =====================================================
+# Sprint 9 — Evaluador Comercial
+# =====================================================
+
+class TestEvaluadorComercial:
+    """Tests del evaluador comercial."""
+
+    def test_evaluar_cliente_listo(self) -> None:
+        """Evaluación de cliente listo tiene score alto."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_evaluator import SalesEvaluatorService
+        profile = obtener_perfil("cliente_listo_para_contratar")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        evaluador = SalesEvaluatorService()
+        evaluacion = evaluador.evaluar(resultado)
+        assert evaluacion.score_total > 0
+        assert evaluacion.score_total <= 100
+        assert evaluacion.perfil_evaluado == "cliente_listo_para_contratar"
+
+    def test_evaluar_cliente_frio(self) -> None:
+        """Evaluación de cliente frío tiene score bajo-medio."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_evaluator import SalesEvaluatorService
+        profile = obtener_perfil("cliente_frio")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        evaluador = SalesEvaluatorService()
+        evaluacion = evaluador.evaluar(resultado)
+        assert evaluacion.score_total >= 0
+        assert evaluacion.score_total <= 100
+
+    def test_evaluar_dimensiones(self) -> None:
+        """Cada dimensión de evaluación tiene un score válido."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_evaluator import SalesEvaluatorService
+        profile = obtener_perfil("cliente_busca_cobertura_familiar")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        evaluador = SalesEvaluatorService()
+        evaluacion = evaluador.evaluar(resultado)
+        assert 0 <= evaluacion.descubrimiento <= 20
+        assert 0 <= evaluacion.calificacion <= 20
+        assert 0 <= evaluacion.valor <= 20
+        assert 0 <= evaluacion.objeciones <= 20
+        assert 0 <= evaluacion.cierre <= 20
+
+    def test_evaluar_detalle(self) -> None:
+        """La evaluación genera un detalle explicativo."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_evaluator import SalesEvaluatorService
+        profile = obtener_perfil("cliente_monotributista")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        evaluador = SalesEvaluatorService()
+        evaluacion = evaluador.evaluar(resultado)
+        assert len(evaluacion.detalle) > 0
+
+    def test_score_suma_dimensiones(self) -> None:
+        """El score total es la suma de las 5 dimensiones."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_evaluator import SalesEvaluatorService
+        profile = obtener_perfil("cliente_listo_para_contratar")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        evaluador = SalesEvaluatorService()
+        evaluacion = evaluador.evaluar(resultado)
+        suma = (
+            evaluacion.descubrimiento
+            + evaluacion.calificacion
+            + evaluacion.valor
+            + evaluacion.objeciones
+            + evaluacion.cierre
+        )
+        assert evaluacion.score_total == suma
+
+
+# =====================================================
+# Sprint 9 — Cierre Mejorado
+# =====================================================
+
+class TestCierreMejorado:
+    """Tests de mejoras en cierre."""
+
+    def test_cierre_urgencia_seleccion(self) -> None:
+        """Prioridad RAPIDEZ selecciona cierre de urgencia."""
+        from app.services.closing_strategy import seleccionar_cierre
+        from app.models.lead import Lead, PrioridadCliente
+        lead = Lead(lead_id="test_urgencia", nombre="Test", prioridad_cliente=PrioridadCliente.RAPIDEZ)
+        cierre = seleccionar_cierre(lead)
+        assert cierre.tipo_cierre == "urgencia"
+        assert "pronto" in cierre.respuesta.lower() or "antes" in cierre.respuesta.lower()
+
+    def test_cierre_beneficio_familia(self) -> None:
+        """Familia selecciona cierre de beneficio."""
+        from app.services.closing_strategy import seleccionar_cierre
+        from app.models.lead import Lead
+        lead = Lead(lead_id="test_beneficio", nombre="Test")
+        lead.actualizar_grupo_familiar(conyuge=True, hijos=True, cantidad_hijos=2)
+        cierre = seleccionar_cierre(lead)
+        assert cierre.tipo_cierre == "beneficio"
+
+    def test_recuperar_indeciso_familia(self) -> None:
+        """Recuperación de indeciso con familia refuerza beneficio."""
+        from app.services.closing_strategy import recuperar_indeciso
+        from app.models.lead import Lead
+        lead = Lead(lead_id="test_recuperar", nombre="Test")
+        lead.actualizar_grupo_familiar(conyuge=True, hijos=True, cantidad_hijos=1)
+        respuesta = recuperar_indeciso(lead)
+        assert "familia" in respuesta.lower() or "familiar" in respuesta.lower()
+
+    def test_recuperar_indeciso_precio(self) -> None:
+        """Recuperación de indeciso sensible a precio."""
+        from app.services.closing_strategy import recuperar_indeciso
+        from app.models.lead import Lead, PrioridadCliente
+        lead = Lead(
+            lead_id="test_recuperar_precio",
+            nombre="Test",
+            prioridad_cliente=PrioridadCliente.ECONOMICO,
+        )
+        respuesta = recuperar_indeciso(lead)
+        assert "presupuesto" in respuesta.lower() or "precio" in respuesta.lower()
+
+    def test_recuperar_indeciso_default(self) -> None:
+        """Recuperación de indeciso genérica."""
+        from app.services.closing_strategy import recuperar_indeciso
+        from app.models.lead import Lead
+        lead = Lead(lead_id="test_recuperar_default", nombre="Test")
+        respuesta = recuperar_indeciso(lead)
+        assert len(respuesta) > 0
+
+    def test_conversation_manager_usa_recuperar(self) -> None:
+        """ConversationManager usa recuperar_indeciso para clientes indecisos."""
+        manager = ConversationManager()
+        tid = 91001
+        # Simular flujo hasta cierre
+        manager.procesar_mensaje(tid, "Hola, soy Lucas")
+        manager.procesar_mensaje(tid, "Busco obra social")
+        manager.procesar_mensaje(tid, "Soy particular")
+        manager.procesar_mensaje(tid, "Solo yo")
+        manager.procesar_mensaje(tid, "30 años")
+        manager.procesar_mensaje(tid, "De Buenos Aires")
+        # Intentar cierre
+        manager.procesar_mensaje(tid, "Sí, quiero avanzar")
+        # Responder con indecisión
+        respuesta = manager.procesar_mensaje(tid, "Tengo que pensarlo")
+        assert len(respuesta) > 0

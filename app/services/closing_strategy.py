@@ -86,6 +86,52 @@ def _cierre_beneficio(lead: Lead) -> str:
     )
 
 
+def _cierre_urgencia(lead: Lead) -> str:
+    """Cierre por urgencia: refuerza el beneficio de actuar rápido."""
+    nombre = lead.nombre or "Hola"
+    return (
+        f"{nombre}, mientras más pronto te afilies, antes empezás a tener la cobertura. "
+        "No querés que dejemos iniciado el proceso ahora?"
+    )
+
+
+def recuperar_indeciso(lead: Lead) -> str:
+    """
+    Recupera un cliente indeciso que no se decide a avanzar.
+
+    Args:
+        lead: Lead del cliente indeciso.
+
+    Returns:
+        Mensaje de recuperación.
+    """
+    nombre = lead.nombre or "Hola"
+
+    # Si tiene familia, reforzar beneficio familiar
+    if lead.grupo_familiar.conyuge or lead.grupo_familiar.hijos:
+        return (
+            f"Tranquilo {nombre}, no es una decisión complicada. "
+            "Lo que sí es importante es que tu familia esté cubierta. "
+            "¿Qué te gustaría aclarar para sentirte más tranquilo?"
+        )
+
+    # Si es sensible al precio, reforzar accesibilidad
+    from app.models.lead import PrioridadCliente
+    if lead.prioridad_cliente == PrioridadCliente.ECONOMICO:
+        return (
+            f"Entiendo {nombre}, el presupuesto es importante. "
+            "Justamente por eso te cuente que tenemos opciones que se adaptan a distintos presupuestos. "
+            "¿Querés que veamos juntos la alternativa que mejor se ajuste?"
+        )
+
+    # Default: ofrecer siguiente paso simple
+    return (
+        f"No te preocupes {nombre}, no es nada complicado. "
+        "Lo que podemos hacer es dejarme tus datos y un asesor te contacta cuando estés listo. "
+        "¿Te parece?"
+    )
+
+
 # ─────────────────────────────────────────────
 # API pública
 # ─────────────────────────────────────────────
@@ -100,6 +146,8 @@ def seleccionar_cierre(lead: Lead) -> CierreComercial:
     Returns:
         CierreComercial con tipo y respuesta.
     """
+    from app.models.lead import PrioridadCliente, TipoAfiliacion
+
     # Si tiene familia, cierre de beneficio
     if lead.grupo_familiar.conyuge or lead.grupo_familiar.hijos:
         return CierreComercial(
@@ -108,11 +156,17 @@ def seleccionar_cierre(lead: Lead) -> CierreComercial:
         )
 
     # Si es empresa, cierre directo
-    from app.models.lead import TipoAfiliacion
     if lead.tipo_afiliacion == TipoAfiliacion.EMPRESA:
         return CierreComercial(
             tipo_cierre="directo",
             respuesta=_cierre_directo(lead),
+        )
+
+    # Si busca rapidez, cierre de urgencia
+    if lead.prioridad_cliente == PrioridadCliente.RAPIDEZ:
+        return CierreComercial(
+            tipo_cierre="urgencia",
+            respuesta=_cierre_urgencia(lead),
         )
 
     # Default: cierre alternativo
