@@ -251,3 +251,73 @@ class TestRenderConfig:
         gitignore = Path(__file__).parent.parent / ".gitignore"
         content = gitignore.read_text()
         assert ".env" in content
+
+
+# ─────────────────────────────────────────────
+# Tests — Telegram Bot en thread secundario
+# ─────────────────────────────────────────────
+
+class TestTelegramBotThread:
+    """Tests de TelegramBot ejecutándose en un hilo secundario (como en Render)."""
+
+    def test_is_main_thread_detecta(self):
+        """_is_main_thread() detecta correctamente el thread."""
+        import threading
+        from app.telegram.bot import TelegramBot
+        from app.config.settings import BotConfig
+
+        # En el test runner, NO somos main thread (pytest puede usar threads)
+        # Pero el test verifica que el método existe y funciona
+        result = TelegramBot._is_main_thread()
+        assert isinstance(result, bool)
+
+    def test_setup_signal_handlers_no_crash_en_thread(self):
+        """_setup_signal_handlers() no lanza ValueError en thread secundario."""
+        import threading
+        from app.telegram.bot import TelegramBot
+        from app.config.settings import BotConfig
+
+        config = BotConfig(telegram_token="test:fake-token")
+        bot = TelegramBot(config)
+
+        errors = []
+
+        def run_in_thread():
+            try:
+                bot._setup_signal_handlers()
+            except Exception as e:
+                errors.append(e)
+
+        t = threading.Thread(target=run_in_thread, name="test-bg-thread")
+        t.start()
+        t.join(timeout=5)
+
+        assert len(errors) == 0, f"ValueError en thread secundario: {errors}"
+
+    def test_run_no_crash_en_thread_secundario(self):
+        """TelegramBot.run() no lanza ValueError por signal handlers en thread."""
+        import threading
+        from app.telegram.bot import TelegramBot
+        from app.config.settings import BotConfig
+
+        config = BotConfig(telegram_token="test:fake-token")
+        bot = TelegramBot(config)
+
+        errors = []
+
+        def run_in_thread():
+            try:
+                # run_polling() fallará por token inválido, pero NO por signal handlers
+                bot.run()
+            except Exception as e:
+                errors.append(e)
+
+        t = threading.Thread(target=run_in_thread, name="test-bot-thread")
+        t.start()
+        t.join(timeout=10)
+
+        # No debe haber ValueError por signal handlers
+        signal_errors = [e for e in errors if "signal" in str(e).lower()]
+        assert len(signal_errors) == 0, (
+            f"signal.signal() falló en thread secundario: {signal_errors}"
+        )

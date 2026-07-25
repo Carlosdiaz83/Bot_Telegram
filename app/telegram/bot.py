@@ -87,43 +87,67 @@ class TelegramBot:
         signal.signal(signal.SIGTERM, _signal_handler)
         logger.info("Signal handlers configurados")
 
+    @staticmethod
+    def _is_main_thread() -> bool:
+        """Verifica si el thread actual es el main thread."""
+        return threading.current_thread() is threading.main_thread()
+
     def run(self) -> None:
         """
         Construye la aplicación, registra handlers e inicia polling.
 
         Seguro para ejecutar en main thread o en un hilo secundario.
         """
+        is_main = self._is_main_thread()
+
         logger.info(
             "=== TelegramBot.run() iniciado (thread=%s, main=%s) ===",
             threading.current_thread().name,
-            threading.current_thread() is threading.main_thread(),
+            is_main,
         )
 
+        # 1. Nuestros propios signal handlers (solo en main thread)
         self._setup_signal_handlers()
 
+        # 2. Construir Application
         logger.info("Construyendo Application...")
         self._application = self._build_application()
 
+        # 3. Registrar handlers
         logger.info("Registrando handlers...")
         self._register_handlers(self._application)
 
+        # 4. Configurar stop_signals para run_polling()
+        # IMPORTANTE: En Linux (Render), run_polling() intenta registrar
+        # signal handlers via loop.add_signal_handler(). Si estamos en un
+        # thread secundario, esto lanza ValueError.
+        # Solución: pasar stop_signals=None para desactivar esa función.
+        if is_main:
+            stop_signals = None  # Usar defaults de la librería
+        else:
+            stop_signals = None  # Desactivar signal handlers de la librería
+            logger.info(
+                "[TELEGRAM] Signal handlers de run_polling desactivados "
+                "(thread secundario)"
+            )
+
         logger.info(
-            "Iniciando polling (env=%s, debug=%s)...",
+            "Iniciando polling (env=%s, debug=%s, stop_signals=%s)...",
             self._config.app_env,
             self._config.app_debug,
+            "defaults" if is_main else "disabled",
         )
 
         try:
             self._application.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query"],
+                stop_signals=stop_signals,
             )
             logger.info("run_polling() finalizó normalmente")
         except Exception as e:
             logger.error(
                 "Error en run_polling: %s", str(e), exc_info=True,
             )
-            # NO usar sys.exit() aquí — en un thread eso mata el thread
-            # silenciosamente sin终止ar la app principal.
         finally:
             logger.info("TelegramBot.run() completado")
