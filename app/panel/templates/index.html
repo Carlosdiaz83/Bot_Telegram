@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Panel SERVIRED{% endblock %}
+{% block content %}
+<h1>Dashboard Comercial</h1>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="number">{{ stats.total }}</div>
+        <div class="label">Total Leads</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.por_temperatura.get('caliente', 0) }}</div>
+        <div class="label">Calientes</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.por_temperatura.get('tibio', 0) }}</div>
+        <div class="label">Tibios</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.por_temperatura.get('frio', 0) }}</div>
+        <div class="label">Fríos</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Leads por Estado</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Estado</th>
+                <th>Cantidad</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for estado, cantidad in stats.por_estado.items()|sort %}
+            <tr>
+                <td><span class="badge badge-{{ estado }}">{{ estado }}</span></td>
+                <td>{{ cantidad }}</td>
+            </tr>
+            {% endfor %}
+            {% if not stats.por_estado %}
+            <tr>
+                <td colspan="2" style="text-align: center; color: #999;">No hay leads registrados</td>
+            </tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<div style="margin-top: 1rem;">
+    <a href="/leads" class="btn btn-primary">Ver Todos los Leads</a>
+</div>
+{% endblock %}

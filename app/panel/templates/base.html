@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Panel SERVIRED{% endblock %}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; }
+        .nav { background: #1a237e; color: white; padding: 1rem 2rem; display: flex; align-items: center; gap: 2rem; }
+        .nav a { color: white; text-decoration: none; font-weight: 500; }
+        .nav a:hover { text-decoration: underline; }
+        .nav .brand { font-size: 1.2rem; font-weight: 700; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        h1 { margin-bottom: 1.5rem; color: #1a237e; }
+        h2 { margin-bottom: 1rem; color: #333; }
+        .card { background: white; border-radius: 8px; padding: 1.5rem; margin-bottom: 1rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 2rem; }
+        .stat-card { background: white; border-radius: 8px; padding: 1.5rem; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stat-card .number { font-size: 2rem; font-weight: 700; color: #1a237e; }
+        .stat-card .label { color: #666; margin-top: 0.5rem; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: 600; }
+        tr:hover { background: #f5f5f5; }
+        .badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: 500; }
+        .badge-frio { background: #e3f2fd; color: #1565c0; }
+        .badge-tibio { background: #fff3e0; color: #e65100; }
+        .badge-caliente { background: #fce4ec; color: #c62828; }
+        .badge-nuevo { background: #e8f5e9; color: #2e7d32; }
+        .badge-contactado { background: #e3f2fd; color: #1565c0; }
+        .badge-calificando { background: #fff3e0; color: #e65100; }
+        .badge-interesado { background: #f3e5f5; color: #7b1fa2; }
+        .badge-objecion { background: #fce4ec; color: #c62828; }
+        .badge-intentando_cierre { background: #e0f7fa; color: #00695c; }
+        .badge-vendido { background: #e8f5e9; color: #1b5e20; }
+        .badge-perdido { background: #fafafa; color: #616161; }
+        .badge-seguimiento { background: #fff8e1; color: #f57f17; }
+        .badge-calificado { background: #ede7f6; color: #4527a0; }
+        .badge-derivado { background: #e0e0e0; color: #424242; }
+        .badge-cerrado { background: #b2dfdb; color: #00695c; }
+        .filters { margin-bottom: 1rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+        .filters select, .filters a { padding: 0.5rem 1rem; border: 1px solid #ddd; border-radius: 4px; background: white; text-decoration: none; color: #333; }
+        .filters a.active { background: #1a237e; color: white; border-color: #1a237e; }
+        .btn { display: inline-block; padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; text-decoration: none; }
+        .btn-primary { background: #1a237e; color: white; }
+        .btn-primary:hover { background: #283593; }
+        .btn-success { background: #2e7d32; color: white; }
+        .btn-danger { background: #c62828; color: white; }
+        .btn-warning { background: #f57f17; color: white; }
+        .detail-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
+        .detail-item { padding: 0.75rem; background: #f8f9fa; border-radius: 4px; }
+        .detail-item .label { font-size: 0.8rem; color: #666; text-transform: uppercase; }
+        .detail-item .value { font-size: 1.1rem; font-weight: 500; margin-top: 0.25rem; }
+        .message { padding: 1rem; margin-bottom: 0.5rem; border-radius: 8px; }
+        .message-cliente { background: #e3f2fd; border-left: 4px solid #1565c0; }
+        .message-sofia { background: #f3e5f5; border-left: 4px solid #7b1fa2; }
+        .message-meta { font-size: 0.75rem; color: #999; margin-top: 0.25rem; }
+        .actions { margin-top: 1.5rem; }
+        .actions form { display: inline-block; margin-right: 0.5rem; }
+        .score-bar { height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; margin-top: 0.5rem; }
+        .score-fill { height: 100%; border-radius: 4px; }
+        .score-frio { background: #1565c0; }
+        .score-tibio { background: #e65100; }
+        .score-caliente { background: #c62828; }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <span class="brand">Panel SERVIRED</span>
+        <a href="/">Dashboard</a>
+        <a href="/leads">Leads</a>
+    </nav>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+</body>
+</html>

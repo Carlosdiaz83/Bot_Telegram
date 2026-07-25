@@ -46,6 +46,7 @@ from app.services.closing_strategy import (
     interpretar_respuesta_cierre,
 )
 from app.services.knowledge_service import KnowledgeService
+from app.services.lead_scoring import LeadScoringService
 from app.ai.service import AIService
 from app.database.database import get_engine, get_session_factory, crear_tablas
 from app.database.repository import ConversationRepository, LeadRepository
@@ -69,6 +70,7 @@ class ConversationManager:
         self.session_manager = SessionManager()
         self.qualifier = LeadQualifierService()
         self.knowledge = KnowledgeService()
+        self.scoring = LeadScoringService()
         self.ai = ai_service
 
         # DB — opcional, si no se pasa URL no persiste
@@ -154,6 +156,9 @@ class ConversationManager:
                 "Un asesor se comunicará pronto con vos. 😊"
             )
 
+        # Calcular score y temperatura
+        lead.score, lead.temperatura_lead = self.scoring.calcular_y_clasificar(lead)
+
         # DB: guardar lead y mensaje
         if self._db_enabled:
             self._guardar_lead_en_db(telegram_id, lead, session)
@@ -174,6 +179,7 @@ class ConversationManager:
         nombre = _extraer_nombre(mensaje)
         if nombre:
             lead.nombre = nombre
+            lead.estado_comercial = EstadoComercial.CONTACTADO
             session.avanzar_etapa(EtapaConversacion.DESCUBRIENDO_NECESIDAD)
             return (
                 f"¡Hola {nombre}! Soy Sofía 😊, asistente de Servired. "
@@ -182,6 +188,7 @@ class ConversationManager:
             )
 
         # Si no extrajo nombre, pedirlo
+        lead.estado_comercial = EstadoComercial.CONTACTADO
         session.avanzar_etapa(EtapaConversacion.DESCUBRIENDO_NECESIDAD)
         return (
             "¡Hola! Soy Sofía 😊, asistente de Servired. "
@@ -230,6 +237,7 @@ class ConversationManager:
     def _handle_calificacion(self, session: UserSession, mensaje: str) -> str:
         """Maneja la etapa de calificación."""
         lead = session.lead
+        lead.estado_comercial = EstadoComercial.CALIFICANDO
 
         # Usar LeadQualifier para extraer datos
         resultado = self.qualifier.process_message(lead, mensaje)
@@ -238,11 +246,13 @@ class ConversationManager:
         # Detectar objeciones durante calificación
         objecion = analizar_mensaje(mensaje, lead)
         if objecion.es_objecion:
+            lead.estado_comercial = EstadoComercial.OBJECION
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
         # Si tiene suficiente información para generar valor
         if self._lead_listo_para_valor(lead):
+            lead.estado_comercial = EstadoComercial.INTERESADO
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
             return generar_argumento(lead)
 
@@ -252,6 +262,7 @@ class ConversationManager:
 
         # Si no hay más preguntas pero falta algo, reforzar
         if session.mensajes_en_etapa > 6:
+            lead.estado_comercial = EstadoComercial.INTERESADO
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
             return generar_argumento(lead)
 
@@ -260,10 +271,12 @@ class ConversationManager:
     def _handle_valor(self, session: UserSession, mensaje: str) -> str:
         """Maneja la etapa de generación de valor."""
         lead = session.lead
+        lead.estado_comercial = EstadoComercial.INTERESADO
 
         # Detectar objeciones
         objecion = analizar_mensaje(mensaje, lead)
         if objecion.es_objecion:
+            lead.estado_comercial = EstadoComercial.OBJECION
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
@@ -271,6 +284,7 @@ class ConversationManager:
         if any(p in mensaje.lower() for p in [
             "sí", "si", "dale", "avanzamos", "ok", "quiero",
         ]):
+            lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
             session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
             cierre = intentar_cierre(lead)
             session.intento_de_cierre = True
@@ -279,6 +293,7 @@ class ConversationManager:
         # Continuar presentando valor desde knowledge
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 3:
+            lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
             session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
             cierre = intentar_cierre(lead)
             session.intento_de_cierre = True
@@ -299,6 +314,7 @@ class ConversationManager:
     def _handle_objeciones(self, session: UserSession, mensaje: str) -> str:
         """Maneja la etapa de objeciones."""
         lead = session.lead
+        lead.estado_comercial = EstadoComercial.OBJECION
 
         # Volver a analizar por si la objeción persiste
         objecion = analizar_mensaje(mensaje, lead)
@@ -307,6 +323,7 @@ class ConversationManager:
             session.mensajes_en_etapa += 1
             if session.mensajes_en_etapa >= 3:
                 # Muchas objeciones → derivar a asesor
+                lead.estado_comercial = EstadoComercial.SEGUIMIENTO
                 session.avanzar_etapa(EtapaConversacion.CALIFICADO)
                 return (
                     f"{lead.nombre or 'Hola'}, entiendo que tenés algunas dudas. "
@@ -320,6 +337,7 @@ class ConversationManager:
             return objecion.respuesta or ""
 
         # Si la objeción fue resuelta, volver al cierre
+        lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
         session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
         cierre = intentar_cierre(lead)
         session.intento_de_cierre = True
@@ -328,10 +346,12 @@ class ConversationManager:
     def _handle_cierre(self, session: UserSession, mensaje: str) -> str:
         """Maneja la etapa de cierre."""
         lead = session.lead
+        lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
         resultado = interpretar_respuesta_cierre(mensaje)
         session.resultado_cierre = resultado
 
         if resultado == ResultadoCierre.ACEPTO:
+            lead.estado_comercial = EstadoComercial.VENDIDO
             session.avanzar_etapa(EtapaConversacion.CALIFICADO)
             return (
                 f"¡Excelente {lead.nombre or ''}! Me alegra que hayas decidido avanzar. "
@@ -340,6 +360,7 @@ class ConversationManager:
             )
 
         if resultado == ResultadoCierre.RECHAZO:
+            lead.estado_comercial = EstadoComercial.PERDIDO
             session.avanzar_etapa(EtapaConversacion.CALIFICADO)
             return (
                 f"¡No hay problema {lead.nombre or ''}! "
@@ -350,6 +371,7 @@ class ConversationManager:
         # PENDIENTE → usar knowledge para cierre de siguiente paso
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 2:
+            lead.estado_comercial = EstadoComercial.SEGUIMIENTO
             session.avanzar_etapa(EtapaConversacion.CALIFICADO)
             return (
                 f"{lead.nombre or 'Hola'}, entiendo que necesitás tiempo. "

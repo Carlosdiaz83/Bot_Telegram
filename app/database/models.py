@@ -68,6 +68,10 @@ class LeadDB(Base):
     etapa_conversacion = Column(String(50), default="nuevo")
     perfil_servired = Column(String(100), nullable=True)
 
+    # Scoring comercial
+    score = Column(Integer, default=0)
+    temperatura_lead = Column(String(20), nullable=True)
+
     # Fechas
     creado = Column(
         DateTime,

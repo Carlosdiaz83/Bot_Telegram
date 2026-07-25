@@ -37,7 +37,15 @@ class InteresDetectado(str, Enum):
 class EstadoComercial(str, Enum):
     """Estado del lead en el funnel de ventas."""
     NUEVO = "nuevo"
+    CONTACTADO = "contactado"
     CALIFICANDO = "calificando"
+    INTERESADO = "interesado"
+    OBJECION = "objecion"
+    INTENTANDO_CIERRE = "intentando_cierre"
+    VENDIDO = "vendido"
+    PERDIDO = "perdido"
+    SEGUIMIENTO = "seguimiento"
+    # Compatibilidad con valores anteriores
     CALIFICADO = "calificado"
     DERIVADO = "derivado"
     CERRADO = "cerrado"
@@ -147,6 +155,10 @@ class Lead(BaseModel):
     # Datos SERVIRED — Perfil
     necesidad_principal: NecesidadPrincipal | None = None
     prioridad_cliente: PrioridadCliente | None = None
+
+    # Scoring comercial
+    score: int = 0
+    temperatura_lead: str = ""
 
     def calcular_integrantes(self) -> int:
         """

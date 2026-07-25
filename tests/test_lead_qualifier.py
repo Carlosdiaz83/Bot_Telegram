@@ -1244,3 +1244,391 @@ class TestConversationManagerDB:
                 os.unlink(tmp.name)
             except OSError:
                 pass
+
+
+# ─────────────────────────────────────────────
+# Tests Sprint 8 — Lead Scoring
+# ─────────────────────────────────────────────
+
+class TestLeadScoring:
+    """Tests del servicio de Lead Scoring."""
+
+    def test_lead_nuevo_score_bajo(self) -> None:
+        """Lead recién creado sin datos tiene score bajo."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        lead = Lead(lead_id="999")
+        score = scoring.calcular_score(lead)
+        assert score <= 10
+
+    def test_lead_completo_score_alto(self) -> None:
+        """Lead con todos los datos tiene score alto."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        lead = Lead(
+            lead_id="998",
+            nombre="Carlos",
+            edad=35,
+            localidad="Buenos Aires",
+            telefono="1155551234",
+            interes_detectado=InteresDetectado.AFILIACION,
+            tipo_afiliacion=TipoAfiliacion.MONOTRIBUTO,
+            tiene_aportes=True,
+            necesidad_principal=NecesidadPrincipal.COBERTURA_FAMILIAR,
+            prioridad_cliente=PrioridadCliente.ECONOMICO,
+        )
+        lead.grupo_familiar.conyuge = True
+        lead.grupo_familiar.hijos = True
+        score = scoring.calcular_score(lead)
+        assert score >= 80
+
+    def test_temperatura_frio(self) -> None:
+        """Score 0-30 es frío."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        assert scoring.clasificar_temperatura(0) == "frio"
+        assert scoring.clasificar_temperatura(30) == "frio"
+
+    def test_temperatura_tibio(self) -> None:
+        """Score 31-70 es tibio."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        assert scoring.clasificar_temperatura(31) == "tibio"
+        assert scoring.clasificar_temperatura(70) == "tibio"
+
+    def test_temperatura_caliente(self) -> None:
+        """Score 71-100 es caliente."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        assert scoring.clasificar_temperatura(71) == "caliente"
+        assert scoring.clasificar_temperatura(100) == "caliente"
+
+    def test_score_grupo_familiar(self) -> None:
+        """Grupo familiar suma +15 puntos."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        lead_sin = Lead(lead_id="997")
+        lead_con = Lead(lead_id="996")
+        lead_con.grupo_familiar.conyuge = True
+        score_sin = scoring.calcular_score(lead_sin)
+        score_con = scoring.calcular_score(lead_con)
+        assert score_con == score_sin + 15
+
+    def test_score_aportes(self) -> None:
+        """Tiene aportes suma +15 puntos."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        lead_sin = Lead(lead_id="995")
+        lead_con = Lead(lead_id="994", tiene_aportes=True)
+        score_sin = scoring.calcular_score(lead_sin)
+        score_con = scoring.calcular_score(lead_con)
+        assert score_con == score_sin + 15
+
+    def test_score_no_supera_100(self) -> None:
+        """El score nunca supera 100."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        lead = Lead(
+            lead_id="993",
+            nombre="Test",
+            edad=30,
+            localidad="CABA",
+            telefono="1155559999",
+            interes_detectado=InteresDetectado.AFILIACION,
+            tipo_afiliacion=TipoAfiliacion.PARTICULAR,
+            tiene_aportes=True,
+            necesidad_principal=NecesidadPrincipal.PRECIO,
+            prioridad_cliente=PrioridadCliente.COMPLETO,
+            estado_comercial=EstadoComercial.VENDIDO,
+        )
+        lead.grupo_familiar.conyuge = True
+        lead.grupo_familiar.hijos = True
+        score = scoring.calcular_score(lead)
+        assert score <= 100
+
+    def test_calcular_y_clasificar(self) -> None:
+        """Método combinado retorna tupla correcta."""
+        from app.services.lead_scoring import LeadScoringService
+        scoring = LeadScoringService()
+        lead = Lead(lead_id="992")
+        score, temp = scoring.calcular_y_clasificar(lead)
+        assert isinstance(score, int)
+        assert temp in ("frio", "tibio", "caliente")
+
+
+# ─────────────────────────────────────────────
+# Tests Sprint 8 — EstadoComercial
+# ─────────────────────────────────────────────
+
+class TestEstadoComercialSprint8:
+    """Tests de los nuevos estados comerciales."""
+
+    def test_nuevos_estados_existen(self) -> None:
+        """Los 11 estados comerciales existen."""
+        assert EstadoComercial.NUEVO.value == "nuevo"
+        assert EstadoComercial.CONTACTADO.value == "contactado"
+        assert EstadoComercial.CALIFICANDO.value == "calificando"
+        assert EstadoComercial.INTERESADO.value == "interesado"
+        assert EstadoComercial.OBJECION.value == "objecion"
+        assert EstadoComercial.INTENTANDO_CIERRE.value == "intentando_cierre"
+        assert EstadoComercial.VENDIDO.value == "vendido"
+        assert EstadoComercial.PERDIDO.value == "perdido"
+        assert EstadoComercial.SEGUIMIENTO.value == "seguimiento"
+        assert EstadoComercial.CALIFICADO.value == "calificado"
+        assert EstadoComercial.DERIVADO.value == "derivado"
+
+    def test_flujo_estados_conversacion(self) -> None:
+        """El flujo de conversación asigna estados correctamente."""
+        manager = ConversationManager()
+        tid = 70001
+        manager.procesar_mensaje(tid, "Hola, soy Pedro")
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        assert session.lead.estado_comercial == EstadoComercial.CONTACTADO
+
+    def test_estado_vendido_en_cierre(self) -> None:
+        """El cierre aceptado marca vendido."""
+        manager = ConversationManager()
+        tid = 70002
+        manager.procesar_mensaje(tid, "Hola, soy Ana")
+        manager.procesar_mensaje(tid, "Solo para mí")
+        manager.procesar_mensaje(tid, "Particular")
+        manager.procesar_mensaje(tid, "Dale, avanzamos")
+        manager.procesar_mensaje(tid, "Sí, quiero")
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        assert session.lead.estado_comercial == EstadoComercial.VENDIDO
+
+
+# ─────────────────────────────────────────────
+# Tests Sprint 8 — Panel Web
+# ─────────────────────────────────────────────
+
+class TestPanelWeb:
+    """Tests del panel web FastAPI."""
+
+    def _create_test_app(self):
+        """Crea una app de test con DB temporal."""
+        import tempfile
+        from fastapi.testclient import TestClient
+        from app.panel.app import create_panel_app
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+        app = create_panel_app(database_url=db_url)
+        return app, tmp.name
+
+    def test_dashboard_status(self) -> None:
+        """GET / retorna 200."""
+        from fastapi.testclient import TestClient
+        app, tmp_name = self._create_test_app()
+        client = TestClient(app)
+        response = client.get("/")
+        assert response.status_code == 200
+        import os
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
+    def test_leads_list_status(self) -> None:
+        """GET /leads retorna 200."""
+        from fastapi.testclient import TestClient
+        app, tmp_name = self._create_test_app()
+        client = TestClient(app)
+        response = client.get("/leads")
+        assert response.status_code == 200
+        import os
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
+    def test_leads_list_muestra_leads(self) -> None:
+        """GET /leads muestra leads creados."""
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine as _create_engine
+        from app.panel.app import create_panel_app
+        from app.database.database import get_session_factory, crear_tablas
+        from app.database.models import LeadDB
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+
+        # Crear lead directo en DB
+        engine = _create_engine(db_url)
+        crear_tablas(engine)
+        Session = get_session_factory(engine)
+        db = Session()
+        lead = LeadDB(telegram_id=55555, nombre="Test Lead")
+        db.add(lead)
+        db.commit()
+        db.close()
+        engine.dispose()
+
+        app = create_panel_app(database_url=db_url)
+        client = TestClient(app)
+        response = client.get("/leads")
+        assert response.status_code == 200
+        assert "Test Lead" in response.text
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+    def test_lead_detail_status(self) -> None:
+        """GET /leads/{id} retorna 200 para lead existente."""
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine as _create_engine
+        from app.panel.app import create_panel_app
+        from app.database.database import get_session_factory, crear_tablas
+        from app.database.models import LeadDB
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+
+        engine = _create_engine(db_url)
+        crear_tablas(engine)
+        Session = get_session_factory(engine)
+        db = Session()
+        lead = LeadDB(telegram_id=55556, nombre="Detalle Test", score=75, temperatura_lead="tibio")
+        db.add(lead)
+        db.commit()
+        lead_id = lead.id
+        db.close()
+        engine.dispose()
+
+        app = create_panel_app(database_url=db_url)
+        client = TestClient(app)
+        response = client.get(f"/leads/{lead_id}")
+        assert response.status_code == 200
+        assert "Detalle Test" in response.text
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+    def test_cambiar_estado(self) -> None:
+        """POST /leads/{id}/estado cambia el estado."""
+        from fastapi.testclient import TestClient
+        from sqlalchemy import create_engine as _create_engine
+        from app.panel.app import create_panel_app
+        from app.database.database import get_session_factory, crear_tablas
+        from app.database.models import LeadDB
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+
+        engine = _create_engine(db_url)
+        crear_tablas(engine)
+        Session = get_session_factory(engine)
+        db = Session()
+        lead = LeadDB(telegram_id=55557, nombre="Estado Test", estado_comercial="nuevo")
+        db.add(lead)
+        db.commit()
+        lead_id = lead.id
+        db.close()
+        engine.dispose()
+
+        app = create_panel_app(database_url=db_url)
+        client = TestClient(app)
+        response = client.post(
+            f"/leads/{lead_id}/estado",
+            data={"estado": "vendido"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+
+        # Verificar cambio
+        engine2 = _create_engine(db_url)
+        Session2 = get_session_factory(engine2)
+        db2 = Session2()
+        lead_db = db2.get(LeadDB, lead_id)
+        assert lead_db is not None
+        assert lead_db.estado_comercial == "vendido"
+        db2.close()
+        engine2.dispose()
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+    def test_lead_detail_inexistente_redirige(self) -> None:
+        """GET /leads/{id} inexistente redirige a /leads."""
+        from fastapi.testclient import TestClient
+        app, tmp_name = self._create_test_app()
+        client = TestClient(app)
+        response = client.get("/leads/99999", follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == "/leads"
+        import os
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
+
+# ─────────────────────────────────────────────
+# Tests Sprint 8 — Scoring en ConversationManager
+# ─────────────────────────────────────────────
+
+class TestScoringIntegration:
+    """Tests de integración de scoring con ConversationManager."""
+
+    def test_manager_calcula_score(self) -> None:
+        """ConversationManager calcula score al procesar mensajes."""
+        manager = ConversationManager()
+        tid = 70010
+        manager.procesar_mensaje(tid, "Hola, soy Lucía")
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        assert isinstance(session.lead.score, int)
+        assert session.lead.score >= 0
+
+    def test_manager_guarda_temperatura(self) -> None:
+        """ConversationManager guarda temperatura del lead."""
+        manager = ConversationManager()
+        tid = 70011
+        manager.procesar_mensaje(tid, "Hola, soy Martín")
+        session = manager.session_manager.get(tid)
+        assert session is not None
+        assert session.lead.temperatura_lead in ("frio", "tibio", "caliente")
+
+    def test_manager_con_db_guarda_score(self) -> None:
+        """Con DB, el score se persiste correctamente."""
+        from sqlalchemy import create_engine as _create_engine
+        import tempfile, os
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+        try:
+            manager = ConversationManager(database_url=db_url)
+            tid = 70012
+            manager.procesar_mensaje(tid, "Hola, soy Pedro")
+
+            # Verificar en DB
+            engine2 = _create_engine(db_url)
+            Session2 = get_session_factory(engine2)
+            db = Session2()
+            try:
+                repo = LeadRepository(db)
+                lead_db = repo.buscar_por_telegram_id(tid)
+                assert lead_db is not None
+                assert lead_db.score >= 0
+                assert lead_db.temperatura_lead in ("frio", "tibio", "caliente")
+            finally:
+                db.close()
+                engine2.dispose()
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass

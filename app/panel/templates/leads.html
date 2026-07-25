@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Leads - Panel SERVIRED{% endblock %}
+{% block content %}
+<h1>Leads</h1>
+
+<div class="filters">
+    <a href="/leads" class="{% if not filtro_estado %}active{% endif %}">Todos</a>
+    <a href="/leads?estado=nuevo" class="{% if filtro_estado == 'nuevo' %}active{% endif %}">Nuevos</a>
+    <a href="/leads?estado=contactado" class="{% if filtro_estado == 'contactado' %}active{% endif %}">Contactados</a>
+    <a href="/leads?estado=calificando" class="{% if filtro_estado == 'calificando' %}active{% endif %}">Calificando</a>
+    <a href="/leads?estado=interesado" class="{% if filtro_estado == 'interesado' %}active{% endif %}">Interesados</a>
+    <a href="/leads?estado=vendido" class="{% if filtro_estado == 'vendido' %}active{% endif %}">Vendidos</a>
+    <a href="/leads?estado=perdido" class="{% if filtro_estado == 'perdido' %}active{% endif %}">Perdidos</a>
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Nombre</th>
+            <th>Telegram</th>
+            <th>Localidad</th>
+            <th>Estado</th>
+            <th>Score</th>
+            <th>Temperatura</th>
+            <th>Creado</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for lead in leads %}
+        <tr>
+            <td>{{ lead.id }}</td>
+            <td><a href="/leads/{{ lead.id }}">{{ lead.nombre or '-' }}</a></td>
+            <td>{{ lead.telegram_id }}</td>
+            <td>{{ lead.localidad or '-' }}</td>
+            <td><span class="badge badge-{{ lead.estado_comercial }}">{{ lead.estado_comercial }}</span></td>
+            <td>
+                {{ lead.score }}
+                <div class="score-bar">
+                    <div class="score-fill score-{{ lead.temperatura_lead or 'frio' }}" style="width: {{ lead.score }}%"></div>
+                </div>
+            </td>
+            <td><span class="badge badge-{{ lead.temperatura_lead or 'frio' }}">{{ lead.temperatura_lead or '-' }}</span></td>
+            <td>{{ lead.creado.strftime('%d/%m %H:%M') if lead.creado else '-' }}</td>
+        </tr>
+        {% endfor %}
+        {% if not leads %}
+        <tr>
+            <td colspan="8" style="text-align: center; color: #999; padding: 2rem;">No hay leads registrados</td>
+        </tr>
+        {% endif %}
+    </tbody>
+</table>
+{% endblock %}

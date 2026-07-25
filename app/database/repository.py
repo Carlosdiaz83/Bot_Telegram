@@ -139,6 +139,8 @@ class LeadRepository:
         lead_db.cantidad_integrantes = lead.cantidad_integrantes
         lead_db.necesidad_principal = lead.necesidad_principal.value if lead.necesidad_principal else None
         lead_db.prioridad_cliente = lead.prioridad_cliente.value if lead.prioridad_cliente else None
+        lead_db.score = lead.score
+        lead_db.temperatura_lead = lead.temperatura_lead
         return self.actualizar_lead(lead_db)
 
     def db_a_lead_domain(self, lead_db: LeadDB) -> Lead:
@@ -172,6 +174,8 @@ class LeadRepository:
             cantidad_integrantes=lead_db.cantidad_integrantes or 1,
             necesidad_principal=NecesidadPrincipal(lead_db.necesidad_principal) if lead_db.necesidad_principal else None,
             prioridad_cliente=PrioridadCliente(lead_db.prioridad_cliente) if lead_db.prioridad_cliente else None,
+            score=lead_db.score or 0,
+            temperatura_lead=lead_db.temperatura_lead or "",
         )
 
 
