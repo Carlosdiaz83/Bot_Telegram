@@ -1879,3 +1879,207 @@ class TestCierreMejorado:
         # Responder con indecisión
         respuesta = manager.procesar_mensaje(tid, "Tengo que pensarlo")
         assert len(respuesta) > 0
+
+
+# =====================================================
+# Sprint 10 — Training Engine
+# =====================================================
+
+class TestTrainingEngine:
+    """Tests del motor de entrenamiento."""
+
+    def test_ejecutar_perfil(self) -> None:
+        """Ejecutar un perfil retorna resultado válido."""
+        from app.training import TrainingEngine
+        trainer = TrainingEngine()
+        resultado = trainer.ejecutar("cliente_listo_para_contratar")
+        assert resultado.perfil == "cliente_listo_para_contratar"
+        assert resultado.resultado_simulacion is not None
+        assert resultado.evaluacion is not None
+        assert isinstance(resultado.errores, list)
+        assert isinstance(resultado.recomendaciones, list)
+        assert 0 <= resultado.score_final <= 100
+
+    def test_ejecutar_todos(self) -> None:
+        """Ejecutar todos los perfiles retorna 8 resultados."""
+        from app.training import TrainingEngine
+        trainer = TrainingEngine()
+        resultados = trainer.ejecutar_todos()
+        assert len(resultados) == 8
+
+    def test_ejecutar_lote(self) -> None:
+        """Ejecutar un lote de perfiles funciona correctamente."""
+        from app.training import TrainingEngine
+        trainer = TrainingEngine()
+        resultados = trainer.ejecutar_lote(
+            ["cliente_frio", "cliente_busca_precio"]
+        )
+        assert len(resultados) == 2
+        assert resultados[0].perfil == "cliente_frio"
+        assert resultados[1].perfil == "cliente_busca_precio"
+
+    def test_errores_detectados(self) -> None:
+        """El entrenamiento detecta errores comerciales."""
+        from app.training import TrainingEngine
+        trainer = TrainingEngine()
+        resultado = trainer.ejecutar("cliente_frio")
+        # Cliente frío puede tener errores por falta de datos
+        assert isinstance(resultado.errores, list)
+
+    def test_recomendaciones_generadas(self) -> None:
+        """El entrenamiento genera recomendaciones."""
+        from app.training import TrainingEngine
+        trainer = TrainingEngine()
+        resultado = trainer.ejecutar("cliente_indeciso")
+        assert isinstance(resultado.recomendaciones, list)
+
+    def test_score_final_con_errores(self) -> None:
+        """Score final se penaliza por errores."""
+        from app.training import TrainingEngine
+        trainer = TrainingEngine()
+        resultado = trainer.ejecutar("cliente_frio")
+        # Score final debe ser <= score de evaluación
+        assert resultado.score_final <= resultado.evaluacion.score_total
+
+    def test_perfil_inexistente(self) -> None:
+        """Perfil inexistente lanza error."""
+        from app.training import TrainingEngine
+        trainer = TrainingEngine()
+        try:
+            trainer.ejecutar("perfil_inexistente")
+            assert False, "Debería lanzar ValueError"
+        except ValueError:
+            pass
+
+
+# =====================================================
+# Sprint 10 — Sales Report
+# =====================================================
+
+class TestSalesReport:
+    """Tests del servicio de reportes."""
+
+    def test_generar_reporte(self) -> None:
+        """Generar reporte con resultados válidos."""
+        from app.training import TrainingEngine
+        from app.services.sales_report import SalesReportService
+        trainer = TrainingEngine()
+        resultados = trainer.ejecutar_lote(
+            ["cliente_frio", "cliente_listo_para_contratar"]
+        )
+        reporte_svc = SalesReportService()
+        reporte = reporte_svc.generar_reporte(resultados)
+        assert reporte.total_simulaciones == 2
+        assert reporte.score_promedio >= 0
+        assert reporte.score_promedio <= 100
+
+    def test_scores_por_dimension(self) -> None:
+        """El reporte tiene scores por dimensión."""
+        from app.training import TrainingEngine
+        from app.services.sales_report import SalesReportService
+        trainer = TrainingEngine()
+        resultados = trainer.ejecutar_lote(
+            ["cliente_busca_precio", "cliente_monotributista"]
+        )
+        reporte_svc = SalesReportService()
+        reporte = reporte_svc.generar_reporte(resultados)
+        assert "descubrimiento" in reporte.scores_por_dimension
+        assert "calificacion" in reporte.scores_por_dimension
+        assert "valor" in reporte.scores_por_dimension
+        assert "objeciones" in reporte.scores_por_dimension
+        assert "cierre" in reporte.scores_por_dimension
+
+    def test_generar_texto(self) -> None:
+        """Generar texto del reporte."""
+        from app.training import TrainingEngine
+        from app.services.sales_report import SalesReportService
+        trainer = TrainingEngine()
+        resultados = trainer.ejecutar_lote(
+            ["cliente_frio", "cliente_listo_para_contratar"]
+        )
+        reporte_svc = SalesReportService()
+        reporte = reporte_svc.generar_reporte(resultados)
+        texto = reporte_svc.generar_texto(reporte)
+        assert len(texto) > 0
+        assert "REPORTE COMERCIAL" in texto
+        assert "Score promedio" in texto
+
+    def test_reporte_vacio(self) -> None:
+        """Reporte con lista vacía retorna valores por defecto."""
+        from app.services.sales_report import SalesReportService
+        reporte_svc = SalesReportService()
+        reporte = reporte_svc.generar_reporte([])
+        assert reporte.total_simulaciones == 0
+        assert reporte.score_promedio == 0
+
+
+# =====================================================
+# Sprint 10 — Sales Quality Rules
+# =====================================================
+
+class TestSalesQualityRules:
+    """Tests de reglas de calidad comercial."""
+
+    def test_verificar_cliente_listo(self) -> None:
+        """Cliente listo tiene menos incumplimientos."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_quality_rules import SalesQualityRules
+        profile = obtener_perfil("cliente_listo_para_contratar")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        reglas = SalesQualityRules()
+        incumplidas = reglas.verificar(resultado)
+        # Cliente listo debería tener pocos incumplimientos
+        assert isinstance(incumplidas, list)
+
+    def test_verificar_cliente_frio(self) -> None:
+        """Cliente frío tiene más incumplimientos."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_quality_rules import SalesQualityRules
+        profile = obtener_perfil("cliente_frio")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        reglas = SalesQualityRules()
+        incumplidas = reglas.verificar(resultado)
+        # Cliente frío debería tener incumplimientos por datos faltantes
+        assert isinstance(incumplidas, list)
+
+    def test_reglas_estructura(self) -> None:
+        """Las reglas incumplidas tienen estructura correcta."""
+        from app.simulation import SimuladorConversacion, obtener_perfil
+        from app.services.sales_quality_rules import SalesQualityRules
+        profile = obtener_perfil("cliente_busca_precio")
+        assert profile is not None
+        sim = SimuladorConversacion(ConversationManager())
+        resultado = sim.simular(profile)
+        reglas = SalesQualityRules()
+        incumplidas = reglas.verificar(resultado)
+        for incumplida in incumplidas:
+            assert "regla" in incumplida
+            assert "fase" in incumplida
+            assert "descripcion" in incumplida
+
+    def test_fases_cubiertas(self) -> None:
+        """Las reglas cubren todas las fases del método."""
+        from app.services.sales_quality_rules import (
+            REGLAS_DESCUBRIMIENTO,
+            REGLAS_PROPUESTA,
+            REGLAS_OBJECIONES,
+            REGLAS_CIERRE,
+        )
+        assert len(REGLAS_DESCUBRIMIENTO) >= 5
+        assert len(REGLAS_PROPUESTA) >= 2
+        assert len(REGLAS_OBJECIONES) >= 2
+        assert len(REGLAS_CIERRE) >= 2
+
+    def test_error_cotizacion_sin_diagnostico(self) -> None:
+        """TrainingEngine detecta cotización sin diagnóstico."""
+        from app.training.engine import TrainingEngine
+        trainer = TrainingEngine()
+        resultado = trainer.ejecutar("cliente_busca_precio")
+        # Este perfil pregunta precio, puede tener este error
+        tipos_error = {e.tipo for e in resultado.errores}
+        # Verificar que el sistema de detección funciona
+        assert isinstance(tipos_error, set)

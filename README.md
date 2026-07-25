@@ -177,7 +177,7 @@ python -m app.panel.app
 pytest -v
 ```
 
-**133 tests** cubriendo:
+**168 tests** cubriendo:
 - Lead Qualifier
 - Lead Scoring
 - Sales Strategy
@@ -187,6 +187,11 @@ pytest -v
 - AI Integration
 - Panel Web
 - Persistencia
+- Simulador de Clientes
+- Evaluador Comercial
+- Training Engine
+- Sales Report
+- Quality Rules
 
 ## Flujo de Conversación
 
@@ -206,6 +211,79 @@ pytest -v
 NUEVO → CONTACTADO → CALIFICANDO → INTERESADO → OBJECION →
 INTENTANDO_CIERRE → VENDIDO / PERDIDO / SEGUIMIENTO
 ```
+
+## Entrenamiento Comercial
+
+Sofía cuenta con un laboratorio de entrenamiento para evaluar y mejorar su capacidad comercial antes de producción.
+
+### Simulador de Clientes
+
+8 perfiles predefinidos que simulan diferentes tipos de clientes:
+
+| Perfil | Comportamiento |
+|---|---|
+| `cliente_frio` | Respuestas cortas, no da datos |
+| `cliente_busca_precio` | Busca lo más barato |
+| `cliente_busca_cobertura_familiar` | Esposa + hijos |
+| `cliente_monotributista` | Monotributista buscando opciones |
+| `cliente_relacion_dependencia` | Empleado con recibo de sueldo |
+| `cliente_objecion_precio` | Acepta pero objeta por precio |
+| `cliente_indeciso` | Nunca se decide |
+| `cliente_listo_para_contratar` | Da todo y acepta avanzar |
+
+### Evaluador Comercial
+
+5 dimensiones de evaluación (0-20 cada una = 0-100 total):
+
+- **Descubrimiento**: ¿detectó necesidades?
+- **Calificación**: ¿obtuvo datos importantes?
+- **Valor**: ¿explicó beneficios?
+- **Objeciones**: ¿respondió correctamente?
+- **Cierre**: ¿intentó avanzar?
+
+### Training Engine
+
+```python
+from app.training import TrainingEngine
+
+trainer = TrainingEngine()
+
+# Ejecutar un perfil
+resultado = trainer.ejecutar("cliente_busca_precio")
+print(resultado.score_final)
+print(resultado.errores)
+print(resultado.recomendaciones)
+
+# Ejecutar todos los perfiles
+resultados = trainer.ejecutar_todos()
+
+# Generar reporte
+from app.services.sales_report import SalesReportService
+reporte_svc = SalesReportService()
+reporte = reporte_svc.generar_reporte(resultados)
+print(reporte_svc.generar_texto(reporte))
+```
+
+### Detección de Errores
+
+El sistema detecta errores comerciales automáticamente:
+
+| Error | Gravedad | Descripción |
+|---|---|---|
+| `cotizacion_sin_diagnostico` | alta | Cotiza sin diagnosticar necesidades |
+| `falta_avance` | alta | No avanza cuando hay interés |
+| `descuento_inmediato` | alta | Ofrece descuento sin investigar valor |
+| `sin_personalizacion` | media | Respuestas genéricas |
+| `cierre_prematuro` | media | Cierra antes de calificar |
+
+### Reglas de Calidad
+
+Basadas en el método de venta consultivo:
+
+1. **Antes de ofrecer**: nombre, grupo familiar, edades, localidad, situación laboral, aportes, necesidad
+2. **En propuesta**: explicar valor, personalizar, no vender solo precio
+3. **En objeciones**: validar, preguntar motivo real, resolver
+4. **En cierre**: detectar intención, pedir avance, solicitar documentación
 
 ## Licencia
 
