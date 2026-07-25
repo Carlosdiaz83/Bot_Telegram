@@ -1,7 +1,7 @@
 """
 Configuración de base de datos con SQLAlchemy.
 
-Diseñado para SQLite en desarrollo y fácil migración a PostgreSQL.
+Diseñado para SQLite en desarrollo y PostgreSQL en producción (Render).
 
 Uso:
     from app.database.database import get_engine, crear_tablas
@@ -24,6 +24,11 @@ _engine: Optional[Engine] = None
 _SessionLocal: Optional[sessionmaker] = None
 
 
+def _is_postgres(url: str) -> bool:
+    """Detecta si la URL es de PostgreSQL."""
+    return url.startswith("postgresql") or url.startswith("postgres")
+
+
 def get_engine(database_url: Optional[str] = None) -> Engine:
     """
     Retorna o crea el engine de base de datos.
@@ -43,12 +48,22 @@ def get_engine(database_url: Optional[str] = None) -> Engine:
         db_path = Path(__file__).parent.parent.parent / "health_advisor.db"
         database_url = f"sqlite:///{db_path}"
 
-    _engine = create_engine(
-        database_url,
-        echo=False,
-        pool_pre_ping=True,
-    )
-    logger.info("Engine de DB creado: %s", database_url.split("@")[-1] if "@" in database_url else database_url)
+    # Configuración específica para PostgreSQL
+    kwargs: dict = {
+        "echo": False,
+        "pool_pre_ping": True,
+    }
+
+    if _is_postgres(database_url):
+        kwargs["pool_size"] = 5
+        kwargs["max_overflow"] = 10
+        kwargs["pool_timeout"] = 30
+        kwargs["pool_recycle"] = 1800
+
+    _engine = create_engine(database_url, **kwargs)
+
+    safe_url = database_url.split("@")[-1] if "@" in database_url else database_url
+    logger.info("Engine de DB creado: %s", safe_url)
     return _engine
 
 
@@ -77,8 +92,6 @@ def get_session_factory(engine: Optional[Engine] = None) -> sessionmaker:
 def get_db() -> Session:
     """
     Dependencia para obtener una sesión de DB.
-
-    Útil como context manager o con next().
 
     Yields:
         Sesión de SQLAlchemy.
