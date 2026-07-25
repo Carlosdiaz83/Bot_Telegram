@@ -4,21 +4,70 @@
 <h1>Dashboard Comercial</h1>
 
 <div class="stats-grid">
-    <div class="stat-card">
+    <div class="stat-card highlight">
         <div class="number">{{ stats.total }}</div>
         <div class="label">Total Leads</div>
     </div>
-    <div class="stat-card">
-        <div class="number">{{ stats.por_temperatura.get('caliente', 0) }}</div>
-        <div class="label">Calientes</div>
+    <div class="stat-card info">
+        <div class="number">{{ stats.nuevos }}</div>
+        <div class="label">Nuevos</div>
     </div>
-    <div class="stat-card">
-        <div class="number">{{ stats.por_temperatura.get('tibio', 0) }}</div>
-        <div class="label">Tibios</div>
+    <div class="stat-card warning">
+        <div class="number">{{ stats.calificando }}</div>
+        <div class="label">Calificando</div>
     </div>
-    <div class="stat-card">
-        <div class="number">{{ stats.por_temperatura.get('frio', 0) }}</div>
-        <div class="label">Fríos</div>
+    <div class="stat-card" style="border-left: 4px solid #7b1fa2;">
+        <div class="number">{{ stats.calificados }}</div>
+        <div class="label">Calificados</div>
+    </div>
+    <div class="stat-card" style="border-left: 4px solid #f57f17;">
+        <div class="number">{{ stats.seguimiento }}</div>
+        <div class="label">Seguimiento</div>
+    </div>
+    <div class="stat-card success">
+        <div class="number">{{ stats.cierres }}</div>
+        <div class="label">Cierres</div>
+    </div>
+    <div class="stat-card danger">
+        <div class="number">{{ stats.perdidas }}</div>
+        <div class="label">Perdidas</div>
+    </div>
+</div>
+
+<div class="two-col">
+    <div class="card">
+        <h2>Por Temperatura</h2>
+        <table>
+            <thead><tr><th>Temperatura</th><th>Cantidad</th></tr></thead>
+            <tbody>
+                <tr>
+                    <td><span class="badge badge-caliente">Caliente</span></td>
+                    <td>{{ stats.por_temperatura.get('caliente', 0) }}</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-tibio">Tibio</span></td>
+                    <td>{{ stats.por_temperatura.get('tibio', 0) }}</td>
+                </tr>
+                <tr>
+                    <td><span class="badge badge-frio">Frio</span></td>
+                    <td>{{ stats.por_temperatura.get('frio', 0) }}</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Entrenamiento SofIA</h2>
+        <table>
+            <tbody>
+                <tr><td><strong>Sesiones totales</strong></td><td>{{ stats.training_total }}</td></tr>
+                <tr><td><strong>Score promedio</strong></td><td>{{ stats.training_promedio }}</td></tr>
+                <tr><td><strong>Mejor score</strong></td><td>{{ stats.training_mejor }}</td></tr>
+            </tbody>
+        </table>
+        <div style="margin-top: 1rem;">
+            <a href="/evolucion" class="btn btn-primary btn-sm">Ver Evolucion</a>
+        </div>
     </div>
 </div>
 

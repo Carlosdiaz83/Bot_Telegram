@@ -21,24 +21,24 @@
         <div class="value">{{ lead.edad or '-' }}</div>
     </div>
     <div class="detail-item">
+        <div class="label">Telefono</div>
+        <div class="value">{{ lead.telefono or '-' }}</div>
+    </div>
+    <div class="detail-item">
         <div class="label">Localidad</div>
         <div class="value">{{ lead.localidad or '-' }}</div>
     </div>
     <div class="detail-item">
-        <div class="label">Teléfono</div>
-        <div class="value">{{ lead.telefono or '-' }}</div>
-    </div>
-    <div class="detail-item">
-        <div class="label">Tipo Afiliación</div>
+        <div class="label">Tipo Afiliacion</div>
         <div class="value">{{ lead.tipo_afiliacion or '-' }}</div>
     </div>
     <div class="detail-item">
         <div class="label">Tiene Aportes</div>
-        <div class="value">{{ 'Sí' if lead.tiene_aportes else ('No' if lead.tiene_aportes is not none else '-') }}</div>
+        <div class="value">{{ 'Si' if lead.tiene_aportes else ('No' if lead.tiene_aportes is not none else '-') }}</div>
     </div>
     <div class="detail-item">
         <div class="label">Grupo Familiar</div>
-        <div class="value">{{ lead.cantidad_integrantes }} integrante(s)</div>
+        <div class="value">{{ lead.cantidad_integrantes or '-' }} integrante(s)</div>
     </div>
     <div class="detail-item">
         <div class="label">Necesidad Principal</div>
@@ -49,72 +49,72 @@
         <div class="value">{{ lead.prioridad_cliente or '-' }}</div>
     </div>
     <div class="detail-item">
+        <div class="label">Perfil SERVIRED</div>
+        <div class="value">{{ lead.perfil_servired or '-' }}</div>
+    </div>
+    <div class="detail-item">
+        <div class="label">Etapa Conversacion</div>
+        <div class="value">{{ lead.etapa_conversacion or '-' }}</div>
+    </div>
+    <div class="detail-item">
         <div class="label">Estado Comercial</div>
         <div class="value"><span class="badge badge-{{ lead.estado_comercial }}">{{ lead.estado_comercial }}</span></div>
     </div>
     <div class="detail-item">
         <div class="label">Score / Temperatura</div>
         <div class="value">
-            {{ lead.score }} / <span class="badge badge-{{ lead.temperatura_lead or 'frio' }}">{{ lead.temperatura_lead or '-' }}</span>
+            {{ lead.score or 0 }} / <span class="badge badge-{{ lead.temperatura_lead or 'frio' }}">{{ lead.temperatura_lead or '-' }}</span>
             <div class="score-bar">
-                <div class="score-fill score-{{ lead.temperatura_lead or 'frio' }}" style="width: {{ lead.score }}%"></div>
+                <div class="score-fill score-{{ lead.temperatura_lead or 'frio' }}" style="width: {{ score_pct }}%"></div>
             </div>
         </div>
-    </div>
-    <div class="detail-item">
-        <div class="label">Perfil SERVIRED</div>
-        <div class="value">{{ lead.perfil_servired or '-' }}</div>
-    </div>
-    <div class="detail-item">
-        <div class="label">Etapa Conversación</div>
-        <div class="value">{{ lead.etapa_conversacion or '-' }}</div>
     </div>
     <div class="detail-item">
         <div class="label">Creado</div>
         <div class="value">{{ lead.creado.strftime('%d/%m/%Y %H:%M') if lead.creado else '-' }}</div>
     </div>
     <div class="detail-item">
-        <div class="label">Última Actualización</div>
+        <div class="label">Ultima Actualizacion</div>
         <div class="value">{{ lead.actualizado.strftime('%d/%m/%Y %H:%M') if lead.actualizado else '-' }}</div>
     </div>
 </div>
 
 <div class="actions">
     <h2>Acciones Comerciales</h2>
-    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
         <form method="POST" action="/leads/{{ lead.id }}/estado">
-            <input type="hidden" name="estado" value="contactado">
-            <button type="submit" class="btn btn-primary">Contactar</button>
-        </form>
-        <form method="POST" action="/leads/{{ lead.id }}/estado">
-            <input type="hidden" name="estado" value="seguimiento">
-            <button type="submit" class="btn btn-warning">Seguimiento</button>
+            <select name="estado" style="padding: 0.4rem; border: 1px solid #ddd; border-radius: 4px;">
+                {% for e in estados %}
+                <option value="{{ e }}" {% if lead.estado_comercial == e %}selected{% endif %}>{{ e }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary btn-sm">Cambiar Estado</button>
         </form>
         <form method="POST" action="/leads/{{ lead.id }}/estado">
             <input type="hidden" name="estado" value="vendido">
-            <button type="submit" class="btn btn-success">Vendido</button>
+            <button type="submit" class="btn btn-success btn-sm">Marcar Vendido</button>
         </form>
         <form method="POST" action="/leads/{{ lead.id }}/estado">
             <input type="hidden" name="estado" value="perdido">
-            <button type="submit" class="btn btn-danger">Perdido</button>
+            <button type="submit" class="btn btn-danger btn-sm">Marcar Perdido</button>
         </form>
     </div>
 </div>
 
 <div class="card" style="margin-top: 2rem;">
-    <h2>Historial de Conversación</h2>
+    <h2>Historial de Conversacion</h2>
     {% if historial %}
         {% for msg in historial %}
         <div class="message message-cliente">
             <strong>Cliente:</strong> {{ msg.mensaje_cliente }}
-            <div class="message-meta">{{ msg.etapa }} | {{ msg.creado.strftime('%d/%m %H:%M') if msg.creado else '' }}</div>
+            <div class="message-meta">{{ msg.etapa or '' }} | {{ msg.creado.strftime('%d/%m/%Y %H:%M') if msg.creado else '' }}</div>
         </div>
         <div class="message message-sofia">
-            <strong>Sofía:</strong> {{ msg.respuesta_sofia }}
+            <strong>SofIA:</strong> {{ msg.respuesta_sofia }}
         </div>
         {% endfor %}
     {% else %}
-        <p style="color: #999; text-align: center;">No hay mensajes registrados</p>
+        <p style="color: #999; text-align: center; padding: 2rem;">No hay mensajes registrados</p>
     {% endif %}
 </div>
 {% endblock %}

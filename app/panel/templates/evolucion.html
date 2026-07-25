@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Evolucion SofIA - Panel SERVIRED{% endblock %}
+{% block content %}
+<h1>Evolucion Comercial de SofIA</h1>
+
+<div class="stats-grid">
+    <div class="stat-card highlight">
+        <div class="number">{{ metricas.total_entrenamientos }}</div>
+        <div class="label">Entrenamientos</div>
+    </div>
+    <div class="stat-card info">
+        <div class="number">{{ metricas.score_promedio }}</div>
+        <div class="label">Score Promedio</div>
+    </div>
+    <div class="stat-card success">
+        <div class="number">{{ metricas.mejor_score }}</div>
+        <div class="label">Mejor Score</div>
+    </div>
+    <div class="stat-card" style="border-left: 4px solid #e65100;">
+        <div class="number">{{ metricas.peor_score }}</div>
+        <div class="label">Peor Score</div>
+    </div>
+    <div class="stat-card {% if evolucion.mejora > 0 %}success{% elif evolucion.mejora < 0 %}danger{% endif %}">
+        <div class="number">{% if evolucion.mejora > 0 %}+{% endif %}{{ evolucion.mejora }}</div>
+        <div class="label">Mejora Total</div>
+    </div>
+</div>
+
+<div class="two-col">
+    <div class="card">
+        <h2>Fortalezas</h2>
+        {% if evolucion.fortalezas %}
+            {% for f in evolucion.fortalezas %}
+            <span class="tag tag-fortaleza">{{ f }}</span>
+            {% endfor %}
+        {% else %}
+            <p style="color: #999;">Sin fortalezas detectadas aun</p>
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Debilidades</h2>
+        {% if evolucion.debilidades_principales %}
+            {% for d in evolucion.debilidades_principales %}
+            <span class="tag tag-debilidad">{{ d }}</span>
+            {% endfor %}
+        {% else %}
+            <p style="color: #999;">Sin debilidades criticas</p>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <h2>Errores Frecuentes</h2>
+    {% if metricas.errores_frecuentes %}
+        {% for tipo, cantidad in metricas.errores_frecuentes %}
+        <span class="tag tag-error">{{ tipo }} ({{ cantidad }})</span>
+        {% endfor %}
+    {% else %}
+        <p style="color: #999;">Sin errores registrados</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Ultimos Entrenamientos</h2>
+    {% if ultimos_entrenamientos %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Perfil</th>
+                <th>Score</th>
+                <th>Descubrimiento</th>
+                <th>Calificacion</th>
+                <th>Valor</th>
+                <th>Objeciones</th>
+                <th>Cierre</th>
+                <th>Fecha</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in ultimos_entrenamientos %}
+            <tr>
+                <td>{{ s.id }}</td>
+                <td>{{ s.perfil_cliente }}</td>
+                <td><strong>{{ s.score_total }}</strong></td>
+                <td>{{ s.score_descubrimiento }}</td>
+                <td>{{ s.score_calificacion }}</td>
+                <td>{{ s.score_valor }}</td>
+                <td>{{ s.score_objeciones }}</td>
+                <td>{{ s.score_cierre }}</td>
+                <td>{{ s.creado.strftime('%d/%m/%Y %H:%M') if s.creado else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color: #999; text-align: center; padding: 2rem;">No hay entrenamientos registrados</p>
+    {% endif %}
+</div>
+{% endblock %}

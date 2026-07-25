@@ -3,22 +3,38 @@
 {% block content %}
 <h1>Leads</h1>
 
-<div class="filters">
-    <a href="/leads" class="{% if not filtro_estado %}active{% endif %}">Todos</a>
-    <a href="/leads?estado=nuevo" class="{% if filtro_estado == 'nuevo' %}active{% endif %}">Nuevos</a>
-    <a href="/leads?estado=contactado" class="{% if filtro_estado == 'contactado' %}active{% endif %}">Contactados</a>
-    <a href="/leads?estado=calificando" class="{% if filtro_estado == 'calificando' %}active{% endif %}">Calificando</a>
-    <a href="/leads?estado=interesado" class="{% if filtro_estado == 'interesado' %}active{% endif %}">Interesados</a>
-    <a href="/leads?estado=vendido" class="{% if filtro_estado == 'vendido' %}active{% endif %}">Vendidos</a>
-    <a href="/leads?estado=perdido" class="{% if filtro_estado == 'perdido' %}active{% endif %}">Perdidos</a>
-</div>
+<form method="GET" action="/leads" class="filters" style="margin-bottom: 1rem;">
+    <input type="text" name="q" placeholder="Buscar nombre, telefono, localidad..." value="{{ busqueda }}" style="min-width: 280px;">
+    <select name="estado" onchange="this.form.submit()">
+        <option value="">Todos los estados</option>
+        {% for e in estados %}
+        <option value="{{ e }}" {% if filtro_estado == e %}selected{% endif %}>{{ e }}</option>
+        {% endfor %}
+    </select>
+    <select name="temperatura" onchange="this.form.submit()">
+        <option value="">Todas las temperaturas</option>
+        <option value="caliente" {% if filtro_temperatura == 'caliente' %}selected{% endif %}>Caliente</option>
+        <option value="tibio" {% if filtro_temperatura == 'tibio' %}selected{% endif %}>Tibio</option>
+        <option value="frio" {% if filtro_temperatura == 'frio' %}selected{% endif %}>Frio</option>
+    </select>
+    <select name="orden" onchange="this.form.submit()">
+        <option value="">Orden default</option>
+        <option value="score_desc" {% if orden == 'score_desc' %}selected{% endif %}>Score mayor</option>
+        <option value="score_asc" {% if orden == 'score_asc' %}selected{% endif %}>Score menor</option>
+        <option value="reciente" {% if orden == 'reciente' %}selected{% endif %}>Mas reciente</option>
+    </select>
+    <button type="submit" class="btn btn-primary btn-sm">Buscar</button>
+    {% if busqueda or filtro_estado or filtro_temperatura or orden %}
+    <a href="/leads" class="btn btn-sm" style="background: #eee; color: #333;">Limpiar</a>
+    {% endif %}
+</form>
 
 <table>
     <thead>
         <tr>
             <th>ID</th>
             <th>Nombre</th>
-            <th>Telegram</th>
+            <th>Telefono</th>
             <th>Localidad</th>
             <th>Estado</th>
             <th>Score</th>
@@ -31,7 +47,7 @@
         <tr>
             <td>{{ lead.id }}</td>
             <td><a href="/leads/{{ lead.id }}">{{ lead.nombre or '-' }}</a></td>
-            <td>{{ lead.telegram_id }}</td>
+            <td>{{ lead.telefono or '-' }}</td>
             <td>{{ lead.localidad or '-' }}</td>
             <td><span class="badge badge-{{ lead.estado_comercial }}">{{ lead.estado_comercial }}</span></td>
             <td>
@@ -51,4 +67,8 @@
         {% endif %}
     </tbody>
 </table>
+
+<div style="margin-top: 1rem; color: #999; font-size: 0.85rem;">
+    {{ leads|length }} lead(s) encontrado(s)
+</div>
 {% endblock %}
