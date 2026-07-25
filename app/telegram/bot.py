@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import signal
 import sys
+import threading
 
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
@@ -48,7 +49,6 @@ class TelegramBot:
             .build()
         )
 
-        # Registrar callback de errores global
         application.add_error_handler(self._handle_error)
 
         logger.info("Application construida correctamente")
@@ -63,37 +63,52 @@ class TelegramBot:
         logger.info("Handlers registrados correctamente")
 
     async def _handle_error(self, update: object, context: object) -> None:
-        """
-        Handler global de errores de Telegram.
-
-        Registra el error y evita que el bot se caiga.
-        """
+        """Handler global de errores de Telegram."""
         logger.error("Error en handler de Telegram: %s", context, exc_info=True)
 
     def _setup_signal_handlers(self) -> None:
-        """Configura handlers para señales de sistema (apagado seguro)."""
+        """
+        Configura handlers de señales SOLO si estamos en el main thread.
+
+        En un hilo secundario (ej: Render), signal.signal() lanza ValueError.
+        """
+        if threading.current_thread() is not threading.main_thread():
+            logger.info(
+                "Omitiendo signal handlers (thread=%s, no es main thread)",
+                threading.current_thread().name,
+            )
+            return
+
         def _signal_handler(signum, frame):
             logger.info("Señal %d recibida, iniciando apagado seguro...", signum)
             self._shutdown_requested = True
 
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
+        logger.info("Signal handlers configurados")
 
     def run(self) -> None:
         """
         Construye la aplicación, registra handlers e inicia polling.
 
-        Incluye:
-        - Apagado seguro con señales SIGINT/SIGTERM.
-        - Reconexión automática en errores de red.
-        - Logs de ciclo de vida.
+        Seguro para ejecutar en main thread o en un hilo secundario.
         """
+        logger.info(
+            "=== TelegramBot.run() iniciado (thread=%s, main=%s) ===",
+            threading.current_thread().name,
+            threading.current_thread() is threading.main_thread(),
+        )
+
         self._setup_signal_handlers()
+
+        logger.info("Construyendo Application...")
         self._application = self._build_application()
+
+        logger.info("Registrando handlers...")
         self._register_handlers(self._application)
 
         logger.info(
-            "Iniciando bot de Telegram (env=%s, debug=%s)...",
+            "Iniciando polling (env=%s, debug=%s)...",
             self._config.app_env,
             self._config.app_debug,
         )
@@ -103,8 +118,12 @@ class TelegramBot:
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query"],
             )
+            logger.info("run_polling() finalizó normalmente")
         except Exception as e:
-            logger.critical("Error fatal al ejecutar polling: %s", str(e), exc_info=True)
-            sys.exit(1)
+            logger.error(
+                "Error en run_polling: %s", str(e), exc_info=True,
+            )
+            # NO usar sys.exit() aquí — en un thread eso mata el thread
+            # silenciosamente sin终止ar la app principal.
         finally:
-            logger.info("Bot de Telegram detenido correctamente")
+            logger.info("TelegramBot.run() completado")
