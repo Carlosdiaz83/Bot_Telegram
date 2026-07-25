@@ -1,0 +1,50 @@
+# ============================================
+# Sofía Comercial AI — .dockerignore
+# ============================================
+
+# Git
+.git
+.gitignore
+
+# Entorno
+.env
+.env.local
+.env.dev
+
+# Base de datos
+*.db
+*.sqlite3
+data/
+
+# Logs
+logs/
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist/
+build/
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov/
+
+# Documentación
+*.md
+!requirements.txt
+
+# OS
+.DS_Store
+Thumbs.db

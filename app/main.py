@@ -1,6 +1,6 @@
 """
-Health Advisor AI — Entry Point
-================================
+Sofía Comercial AI — Entry Point
+=================================
 Punto de entrada de la aplicación.
 Carga la configuración, configura logging e inicia el bot de Telegram.
 
@@ -27,9 +27,11 @@ def main() -> None:
         sys.exit(1)
 
     # 2. Configurar logging
+    is_production = config.app_env == "production"
     setup_logging(
         level=config.log_level,
-        log_to_file=config.app_debug,
+        log_to_file=config.app_debug or is_production,
+        structured=is_production,
     )
 
     # 3. Iniciar bot

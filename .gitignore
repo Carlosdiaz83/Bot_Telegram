@@ -11,6 +11,10 @@ build/
 # === Environment ===
 .env
 .env.local
+.env.dev
+
+# === Docker ===
+data/
 
 # === IDE ===
 .vscode/
