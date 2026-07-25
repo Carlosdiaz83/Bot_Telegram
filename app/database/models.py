@@ -1,8 +1,9 @@
 """
-Modelos ORM de SQLAlchemy para persistencia de Leads y Conversaciones.
+Modelos ORM de SQLAlchemy para persistencia de Leads, Conversaciones
+y Sesiones de Entrenamiento.
 
 Uso:
-    from app.database.models import LeadDB, ConversationMessageDB
+    from app.database.models import LeadDB, ConversationMessageDB, TrainingSessionDB
 """
 
 from __future__ import annotations
@@ -128,3 +129,49 @@ class ConversationMessageDB(Base):
 
     def __repr__(self) -> str:
         return f"<ConversationMessageDB(id={self.id}, lead_id={self.lead_id}, etapa={self.etapa})>"
+
+
+class TrainingSessionDB(Base):
+    """
+    Modelo persistente de sesión de entrenamiento.
+
+    Almacena el resultado de cada ejecución del TrainingEngine
+    para analizar la evolución comercial de Sofía.
+    """
+
+    __tablename__ = "training_sessions"
+
+    # ID
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # Datos de la sesión
+    perfil_cliente = Column(String(100), nullable=False, index=True)
+    canal_simulacion = Column(String(50), default="simulador")
+
+    # Scores por dimensión (0-20 cada uno)
+    score_total = Column(Integer, default=0)
+    score_descubrimiento = Column(Integer, default=0)
+    score_calificacion = Column(Integer, default=0)
+    score_valor = Column(Integer, default=0)
+    score_objeciones = Column(Integer, default=0)
+    score_cierre = Column(Integer, default=0)
+
+    # Errores
+    cantidad_errores = Column(Integer, default=0)
+    errores_detectados = Column(Text, default="[]")
+
+    # Recomendaciones
+    recomendaciones = Column(Text, default="[]")
+
+    # Metadata
+    creado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TrainingSessionDB(id={self.id}, perfil={self.perfil_cliente}, "
+            f"score={self.score_total})>"
+        )

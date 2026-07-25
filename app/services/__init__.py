@@ -13,6 +13,7 @@ Uso:
     from app.services.sales_evaluator import SalesEvaluatorService
     from app.services.sales_report import SalesReportService
     from app.services.sales_quality_rules import SalesQualityRules
+    from app.services.commercial_evolution_service import CommercialEvolutionService
 """
 
 from app.services.lead_qualifier import LeadQualifierService, QualificationResult
@@ -24,8 +25,10 @@ from app.services.closing_strategy import intentar_cierre
 from app.services.sales_evaluator import SalesEvaluatorService
 from app.services.sales_report import SalesReportService
 from app.services.sales_quality_rules import SalesQualityRules
+from app.services.commercial_evolution_service import CommercialEvolutionService
 
 __all__ = [
+    "CommercialEvolutionService",
     "ConversationManager",
     "LeadQualifierService",
     "PerfilServired",

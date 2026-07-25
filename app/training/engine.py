@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Optional
 
 from app.simulation.engine import SimuladorConversacion, ResultadoSimulacion
 from app.simulation.profiles import PERFILES_CLIENTES, obtener_perfil, listar_perfiles
@@ -72,12 +73,20 @@ class TrainingEngine:
 
     Ejecuta simulaciones contra el ConversationManager,
     las evalúa, detecta errores y genera recomendaciones.
+    Opcionalmente guarda los resultados en DB para análisis de evolución.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, database_url: Optional[str] = None) -> None:
         self._manager = ConversationManager()
         self._simulador = SimuladorConversacion(self._manager)
         self._evaluador = SalesEvaluatorService()
+        self._db_enabled = database_url is not None
+        self._db_factory = None
+        if self._db_enabled:
+            from app.database.database import get_engine, get_session_factory, crear_tablas
+            engine = get_engine(database_url)
+            crear_tablas(engine)
+            self._db_factory = get_session_factory(engine)
 
     def ejecutar(self, perfil: str) -> ResultadoEntrenamiento:
         """
@@ -130,6 +139,10 @@ class TrainingEngine:
             len(errores),
         )
 
+        # 6. Guardar en DB si está habilitado
+        if self._db_enabled:
+            self._guardar_en_db(resultado)
+
         return resultado
 
     def ejecutar_todos(self) -> list[ResultadoEntrenamiento]:
@@ -161,6 +174,36 @@ class TrainingEngine:
             resultado = self.ejecutar(perfil)
             resultados.append(resultado)
         return resultados
+
+    def _guardar_en_db(self, resultado: ResultadoEntrenamiento) -> None:
+        """
+        Guarda el resultado del entrenamiento en la base de datos.
+
+        Args:
+            resultado: Resultado del entrenamiento a persistir.
+        """
+        from app.database.repository import TrainingRepository
+        session = self._db_factory()
+        try:
+            repo = TrainingRepository(session)
+            repo.guardar({
+                "perfil": resultado.perfil,
+                "score_total": resultado.score_final,
+                "score_descubrimiento": resultado.evaluacion.score_descubrimiento,
+                "score_calificacion": resultado.evaluacion.score_calificacion,
+                "score_valor": resultado.evaluacion.score_valor,
+                "score_objeciones": resultado.evaluacion.score_objeciones,
+                "score_cierre": resultado.evaluacion.score_cierre,
+                "cantidad_errores": len(resultado.errores),
+                "errores": [e.tipo for e in resultado.errores],
+                "recomendaciones": resultado.recomendaciones,
+            })
+            logger.info("Entrenamiento %s guardado en DB", resultado.perfil)
+        except Exception as e:
+            session.rollback()
+            logger.error("Error guardando entrenamiento en DB: %s", str(e))
+        finally:
+            session.close()
 
     def _detectar_errores(self, resultado: ResultadoSimulacion) -> list[ErrorComercial]:
         """

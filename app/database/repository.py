@@ -1,11 +1,11 @@
 """
-Repositorios de persistencia para Leads y Conversaciones.
+Repositorios de persistencia para Leads, Conversaciones y Entrenamientos.
 
 Proporciona acceso a la base de datos siguiendo el patrón Repository.
 Preparado para cambiar de SQLite a PostgreSQL modificando solo la URL.
 
 Uso:
-    from app.database.repository import LeadRepository, ConversationRepository
+    from app.database.repository import LeadRepository, ConversationRepository, TrainingRepository
     lead_repo = LeadRepository(db)
     lead = lead_repo.buscar_por_telegram_id(123456)
 """
@@ -236,3 +236,179 @@ class ConversationRepository:
         )
         result = self._db.execute(stmt)
         return list(result.scalars().all())
+
+
+class TrainingRepository:
+    """
+    Repositorio de persistencia de sesiones de entrenamiento.
+
+    Maneja el guardado y consulta de resultados de entrenamiento
+    para analizar la evolución comercial de Sofía.
+    """
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def guardar(self, session_data: dict) -> "TrainingSessionDB":
+        """
+        Guarda una sesión de entrenamiento.
+
+        Args:
+            session_data: Diccionario con los datos de la sesión.
+
+        Returns:
+            TrainingSessionDB creado.
+        """
+        import json
+        from app.database.models import TrainingSessionDB
+
+        session_db = TrainingSessionDB(
+            perfil_cliente=session_data.get("perfil", ""),
+            canal_simulacion=session_data.get("canal", "simulador"),
+            score_total=session_data.get("score_total", 0),
+            score_descubrimiento=session_data.get("score_descubrimiento", 0),
+            score_calificacion=session_data.get("score_calificacion", 0),
+            score_valor=session_data.get("score_valor", 0),
+            score_objeciones=session_data.get("score_objeciones", 0),
+            score_cierre=session_data.get("score_cierre", 0),
+            cantidad_errores=session_data.get("cantidad_errores", 0),
+            errores_detectados=json.dumps(session_data.get("errores", [])),
+            recomendaciones=json.dumps(session_data.get("recomendaciones", [])),
+        )
+        self._db.add(session_db)
+        self._db.commit()
+        self._db.refresh(session_db)
+        logger.info(
+            "Sesión de entrenamiento guardada: perfil=%s, score=%d",
+            session_db.perfil_cliente,
+            session_db.score_total,
+        )
+        return session_db
+
+    def historial(self, limit: int = 100) -> list:
+        """
+        Obtiene el historial de entrenamientos.
+
+        Args:
+            limit: Máximo de resultados.
+
+        Returns:
+            Lista de TrainingSessionDB ordenados por fecha descendente.
+        """
+        from app.database.models import TrainingSessionDB
+        stmt = (
+            select(TrainingSessionDB)
+            .order_by(TrainingSessionDB.creado.desc())
+            .limit(limit)
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def por_perfil(self, perfil: str) -> list:
+        """
+        Busca entrenamientos por perfil de cliente.
+
+        Args:
+            perfil: Nombre del perfil.
+
+        Returns:
+            Lista de TrainingSessionDB del perfil.
+        """
+        from app.database.models import TrainingSessionDB
+        stmt = (
+            select(TrainingSessionDB)
+            .where(TrainingSessionDB.perfil_cliente == perfil)
+            .order_by(TrainingSessionDB.creado.desc())
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def ultimos(self, n: int = 10) -> list:
+        """
+        Obtiene los últimos N entrenamientos.
+
+        Args:
+            n: Cantidad de entrenamientos.
+
+        Returns:
+            Lista de TrainingSessionDB.
+        """
+        from app.database.models import TrainingSessionDB
+        stmt = (
+            select(TrainingSessionDB)
+            .order_by(TrainingSessionDB.creado.desc())
+            .limit(n)
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def score_promedio(self) -> float:
+        """
+        Calcula el score promedio de todos los entrenamientos.
+
+        Returns:
+            Score promedio.
+        """
+        from app.database.models import TrainingSessionDB
+        stmt = select(TrainingSessionDB.score_total)
+        result = self._db.execute(stmt)
+        scores = list(result.scalars().all())
+        if not scores:
+            return 0.0
+        return sum(scores) / len(scores)
+
+    def mejor_score(self) -> int:
+        """
+        Obtiene el mejor score registrado.
+
+        Returns:
+            Mejor score.
+        """
+        from app.database.models import TrainingSessionDB
+        stmt = select(TrainingSessionDB.score_total)
+        result = self._db.execute(stmt)
+        scores = list(result.scalars().all())
+        return max(scores) if scores else 0
+
+    def peor_score(self) -> int:
+        """
+        Obtiene el peor score registrado.
+
+        Returns:
+            Peor score.
+        """
+        from app.database.models import TrainingSessionDB
+        stmt = select(TrainingSessionDB.score_total)
+        result = self._db.execute(stmt)
+        scores = list(result.scalars().all())
+        return min(scores) if scores else 0
+
+    def errores_frecuentes(self) -> list:
+        """
+        Calcula los errores más frecuentes.
+
+        Returns:
+            Lista de tuples (tipo_error, cantidad) ordenada por frecuencia.
+        """
+        import json
+        from collections import Counter
+        from app.database.models import TrainingSessionDB
+
+        stmt = select(TrainingSessionDB.errores_detectados)
+        result = self._db.execute(stmt)
+        errores_raw = list(result.scalars().all())
+
+        contador: Counter = Counter()
+        for errores_json in errores_raw:
+            try:
+                errores = json.loads(errores_json)
+                if isinstance(errores, list):
+                    for error in errores:
+                        if isinstance(error, dict) and "tipo" in error:
+                            contador[error["tipo"]] += 1
+                        elif isinstance(error, str):
+                            contador[error] += 1
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        return contador.most_common()

@@ -285,6 +285,38 @@ Basadas en el método de venta consultivo:
 3. **En objeciones**: validar, preguntar motivo real, resolver
 4. **En cierre**: detectar intención, pedir avance, solicitar documentación
 
+### Evolución Comercial
+
+Cada entrenamiento se guarda automáticamente en SQLite (si se proporciona `database_url`), permitiendo analizar la mejora continua de Sofía:
+
+```python
+# Entrenamiento con persistencia
+trainer = TrainingEngine(database_url="sqlite:///data/training.db")
+resultado = trainer.ejecutar("cliente_busca_precio")
+
+# Analizar evolución
+from app.services.commercial_evolution_service import CommercialEvolutionService
+evo_svc = CommercialEvolutionService(db_session)
+
+# Evolución general
+evolucion = evo_svc.obtener_evolucion()
+print(f"Mejora: {evolucion.mejora:+d} puntos")
+print(f"Debilidades: {evolucion.debilidades_principales}")
+print(f"Fortalezas: {evolucion.fortalezas}")
+
+# Métricas consolidadas
+metricas = evo_svc.obtener_metricas()
+print(f"Score promedio: {metricas.score_promedio}")
+print(f"Errores frecuentes: {metricas.errores_frecuentes}")
+```
+
+El sistema analiza:
+- **Evolución**: diferencia entre primer y último entrenamiento
+- **Debilidades**: dimensiones con score promedio < 10
+- **Fortalezas**: dimensiones con score promedio >= 15
+- **Errores frecuentes**: tipos de error más repetidos
+- **Evolución por dimensión**: tendencia temporal de cada área
+
 ## Licencia
 
 MIT
