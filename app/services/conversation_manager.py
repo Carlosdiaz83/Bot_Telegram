@@ -496,32 +496,43 @@ class ConversationManager:
     def _obtener_knowledge_para_etapa(
         self, lead: Lead, etapa: EtapaConversacion, mensaje: str
     ) -> str:
-        """Obtiene la información de knowledge relevante para la etapa."""
+        """
+        Obtiene información de knowledge relevante para el Lead y etapa.
+
+        Combina conocimiento profundo (contexto_para_lead) con
+        conocimiento específico de la etapa.
+        """
+        partes: list[str] = []
+
+        # Conocimiento profundo basado en Lead
+        contexto_lead = self.knowledge.contexto_para_lead(lead, etapa.value, mensaje)
+        if contexto_lead:
+            partes.append(contexto_lead)
+
+        # Conocimiento específico de etapa (fallback)
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
             if lead.prioridad_cliente == PrioridadCliente.ECONOMICO:
-                return self.knowledge.obtener_argumento_perfil("económico")
-            if lead.grupo_familiar.conyuge or lead.grupo_familiar.hijos:
-                return self.knowledge.obtener_argumento_perfil("familias")
-            if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
-                return self.knowledge.obtener_argumento_perfil("monotributistas")
-            return self.knowledge.obtener_argumento_perfil("particulares")
+                perfil = self.knowledge.obtener_argumento_perfil("económico")
+            elif lead.grupo_familiar.conyuge or lead.grupo_familiar.hijos:
+                perfil = self.knowledge.obtener_argumento_perfil("familias")
+            elif lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
+                perfil = self.knowledge.obtener_argumento_perfil("monotributistas")
+            else:
+                perfil = self.knowledge.obtener_argumento_perfil("particulares")
+            if perfil:
+                partes.append(perfil)
 
-        if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
-            mensaje_lower = mensaje.lower()
-            if any(p in mensaje_lower for p in ["caro", "cuesta", "precio", "dinero"]):
-                return self.knowledge.obtener_respuesta_objecion("caro")
-            if any(p in mensaje_lower for p in ["pensar", "después", "mañana"]):
-                return self.knowledge.obtener_respuesta_objecion("pensar")
-            if any(p in mensaje_lower for p in ["seguro", "duda", "no sé"]):
-                return self.knowledge.obtener_respuesta_objecion("seguro")
-            if any(p in mensaje_lower for p in ["tiempo", "ocupado"]):
-                return self.knowledge.obtener_respuesta_objecion("tiempo")
-            return self.knowledge.obtener_objeciones()
+        elif etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
+            objecion = self.knowledge.obtener_respuesta_objecion(mensaje)
+            if objecion:
+                partes.append(objecion)
 
-        if etapa == EtapaConversacion.INTENTANDO_CIERRE:
-            return self.knowledge.obtener_cierres()
+        elif etapa == EtapaConversacion.INTENTANDO_CIERRE:
+            cierres = self.knowledge.obtener_cierres()
+            if cierres:
+                partes.append(cierres[:500])
 
-        return self.knowledge.obtener_beneficios()
+        return "\n\n".join(partes)
 
     def _mejorar_respuesta_con_ia(
         self,
