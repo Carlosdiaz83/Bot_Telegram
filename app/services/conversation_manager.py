@@ -4,6 +4,11 @@ Orquestador del flujo de conversación comercial.
 Coordina sesión, LeadQualifier, sales_strategy, objection_handler
 y closing_strategy para manejar la conversación completa.
 
+Responsabilidades:
+    - Decidir etapa, preguntas, datos faltantes, avance comercial.
+    - Delegar tono, empatía, redacción y persuasión a AIService.
+    - Persistir estado en DB para sobrevivir reinicios.
+
 Uso:
     from app.services.conversation_manager import ConversationManager
     manager = ConversationManager()
@@ -74,135 +79,211 @@ class ConversationManager:
         self.scoring = LeadScoringService()
         self.ai = ai_service
 
-        # DB — opcional, si no se pasa URL no persiste
         self._db_enabled = database_url is not None
         if self._db_enabled:
             engine = get_engine(database_url)
             crear_tablas(engine)
             self._db_factory = get_session_factory(engine)
+            logger.info("[DATABASE] ConversationManager con DB habilitada")
         else:
             self._db_factory = None
+            logger.info("[DATABASE] ConversationManager sin DB (solo memoria)")
 
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
         Procesa un mensaje del usuario y devuelve la respuesta de Sofía.
 
-        Args:
-            telegram_id: ID del usuario en Telegram.
-            mensaje: Texto del mensaje.
-
-        Returns:
-            Respuesta de Sofía.
+        Flujo:
+            1. Obtener sesión (memoria o crear nueva).
+            2. Cargar lead desde DB si existe (sobreescribe sesión).
+            3. Detectar usuario returning (etapa ya avanzada).
+            4. Enrutar a handler según etapa.
+            5. Calcular score, persistir, loguear.
         """
         session = self.session_manager.get_or_create(telegram_id)
-        lead = session.lead
 
-        # DB: cargar lead persistido si existe
         if self._db_enabled:
             self._cargar_lead_desde_db(telegram_id, session)
 
-        mensaje_lower = mensaje.lower().strip()
+        lead = session.lead
+        es_usuario_returning = self._es_usuario_returning(session)
+
+        if es_usuario_returning:
+            logger.info(
+                "[LEAD] Lead returning detectado — id=%s, nombre=%s, etapa=%s",
+                telegram_id, lead.nombre, session.etapa.value,
+            )
 
         logger.debug(
-            "Procesando mensaje de %s en etapa %s: %s",
-            telegram_id,
-            session.etapa.value,
-            mensaje[:50],
+            "[CONVERSATION] Procesando — user=%s, etapa=%s, mensajes_en_etapa=%d: %s",
+            telegram_id, session.etapa.value, session.mensajes_en_etapa,
+            mensaje[:60],
         )
 
-        respuesta = ""
+        respuesta = self._enrutar_mensaje(session, mensaje, es_usuario_returning)
 
-        # ── Saludo inicial ──
-        if session.etapa == EtapaConversacion.NUEVO:
-            respuesta = self._handle_nuevo(session, mensaje)
-
-        # ── Descubrimiento de necesidad ──
-        elif session.etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
-            respuesta = self._wrap_ia(
-                self._handle_descubrimiento(session, mensaje),
-                session, mensaje,
-            )
-
-        # ── Calificación ──
-        elif session.etapa == EtapaConversacion.CALIFICANDO:
-            respuesta = self._wrap_ia(
-                self._handle_calificacion(session, mensaje),
-                session, mensaje,
-            )
-
-        # ── Generación de valor ──
-        elif session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
-            respuesta = self._wrap_ia(
-                self._handle_valor(session, mensaje),
-                session, mensaje,
-            )
-
-        # ── Manejo de objeciones ──
-        elif session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
-            respuesta = self._wrap_ia(
-                self._handle_objeciones(session, mensaje),
-                session, mensaje,
-            )
-
-        # ── Intento de cierre ──
-        elif session.etapa == EtapaConversacion.INTENTANDO_CIERRE:
-            respuesta = self._wrap_ia(
-                self._handle_cierre(session, mensaje),
-                session, mensaje,
-            )
-
-        else:
-            respuesta = (
-                f"Gracias {lead.nombre or ''} por tu consulta. "
-                "Un asesor se comunicará pronto con vos. 😊"
-            )
-
-        # Calcular score y temperatura
         lead.score, lead.temperatura_lead = self.scoring.calcular_y_clasificar(lead)
 
-        # DB: guardar lead y mensaje
         if self._db_enabled:
             self._guardar_lead_en_db(telegram_id, lead, session)
             self._guardar_mensaje_en_db(telegram_id, mensaje, respuesta, session)
 
+        logger.info(
+            "[SALES] user=%s, etapa=%s, estado=%s, score=%d, temp=%s",
+            telegram_id, session.etapa.value,
+            lead.estado_comercial.value, lead.score, lead.temperatura_lead,
+        )
+
         return respuesta
+
+    # ─────────────────────────────────────────
+    # Enrutamiento
+    # ─────────────────────────────────────────
+
+    def _es_usuario_returning(self, session: UserSession) -> bool:
+        """Detecta si el usuario ya tenía una conversación activa."""
+        return (
+            session.etapa != EtapaConversacion.NUEVO
+            and session.lead.nombre is not None
+        )
+
+    def _enrutar_mensaje(
+        self, session: UserSession, mensaje: str, es_returning: bool
+    ) -> str:
+        """Enruta el mensaje al handler según la etapa actual."""
+        etapa = session.etapa
+
+        if etapa == EtapaConversacion.NUEVO:
+            if es_returning:
+                return self._handle_returning(session, mensaje)
+            return self._handle_nuevo(session, mensaje)
+
+        if etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
+            return self._wrap_ia(
+                self._handle_descubrimiento(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.CALIFICANDO:
+            return self._wrap_ia(
+                self._handle_calificacion(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.PRESENTANDO_VALOR:
+            return self._wrap_ia(
+                self._handle_valor(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
+            return self._wrap_ia(
+                self._handle_objeciones(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.INTENTANDO_CIERRE:
+            return self._wrap_ia(
+                self._handle_cierre(session, mensaje),
+                session, mensaje,
+            )
+
+        # Etapas finales (CALIFICADO, DERIVADO)
+        nombre = session.lead.nombre or ""
+        return (
+            f"Gracias {nombre} por tu consulta. "
+            "Un asesor se comunicará pronto con vos. 😊"
+        )
 
     # ─────────────────────────────────────────
     # Handlers por etapa
     # ─────────────────────────────────────────
 
     def _handle_nuevo(self, session: UserSession, mensaje: str) -> str:
-        """Maneja el primer mensaje del usuario."""
+        """Primer mensaje: saluda y pide nombre. NO avanza de etapa hasta tener nombre."""
         lead = session.lead
+        lead.estado_comercial = EstadoComercial.CONTACTADO
 
-        # Detectar nombre del primer mensaje
         from app.services.lead_qualifier import _extraer_nombre
         nombre = _extraer_nombre(mensaje)
+
         if nombre:
             lead.nombre = nombre
-            lead.estado_comercial = EstadoComercial.CONTACTADO
             session.avanzar_etapa(EtapaConversacion.DESCUBRIENDO_NECESIDAD)
+            logger.info(
+                "[LEAD] Lead nuevo — id=%s, nombre=%s",
+                session.telegram_id, nombre,
+            )
             return (
-                f"¡Hola {nombre}! Soy Sofía 😊, asistente de Servired. "
+                f"¡Hola {nombre}! Soy Sofía 😊, asesora de Servired. "
                 "Te voy a ayudar a encontrar la opción más conveniente para vos. "
                 f"Decime {nombre}, ¿la cobertura sería para vos o tu familia?"
             )
 
-        # Si no extrajo nombre, pedirlo
-        lead.estado_comercial = EstadoComercial.CONTACTADO
-        session.avanzar_etapa(EtapaConversacion.DESCUBRIENDO_NECESIDAD)
+        # Sin nombre → quedarse en NUEVO y pedir nombre
+        logger.debug("[LEAD] Esperando nombre de user=%s", session.telegram_id)
         return (
-            "¡Hola! Soy Sofía 😊, asistente de Servired. "
+            "¡Hola! Soy Sofía 😊, asesora de Servired. "
             "Te voy a ayudar a encontrar la opción más conveniente para vos. "
             "¿Cómo te llamás?"
+        )
+
+    def _handle_returning(self, session: UserSession, mensaje: str) -> str:
+        """Maneja usuario que vuelve después de un reinicio."""
+        lead = session.lead
+        nombre = lead.nombre
+
+        logger.info(
+            "[LEAD] Retomando conversación — user=%s, nombre=%s, etapa=%s",
+            session.telegram_id, nombre, session.etapa.value,
+        )
+
+        # Re-enrutar a la etapa correspondiente (sin el saludo inicial)
+        return self._enrutar_mensaje_directo(session, mensaje)
+
+    def _enrutar_mensaje_directo(self, session: UserSession, mensaje: str) -> str:
+        """Enruta directamente a la etapa sin detectar returning."""
+        etapa = session.etapa
+
+        if etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
+            return self._wrap_ia(
+                self._handle_descubrimiento(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.CALIFICANDO:
+            return self._wrap_ia(
+                self._handle_calificacion(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.PRESENTANDO_VALOR:
+            return self._wrap_ia(
+                self._handle_valor(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
+            return self._wrap_ia(
+                self._handle_objeciones(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.INTENTANDO_CIERRE:
+            return self._wrap_ia(
+                self._handle_cierre(session, mensaje),
+                session, mensaje,
+            )
+
+        return (
+            f"{session.lead.nombre or 'Hola'}, "
+            "¿en qué puedo ayudarte?"
         )
 
     def _handle_descubrimiento(self, session: UserSession, mensaje: str) -> str:
         """Maneja la etapa de descubrimiento de necesidad."""
         lead = session.lead
-        mensaje_lower = mensaje.lower()
 
-        # Si todavía no tiene nombre, pedirlo
         if lead.nombre is None:
             from app.services.lead_qualifier import _extraer_nombre
             nombre = _extraer_nombre(mensaje)
@@ -211,7 +292,6 @@ class ConversationManager:
             else:
                 return "¿Cómo te llamás?"
 
-        # Detectar grupo familiar
         from app.services.lead_qualifier import _detectar_grupo_familiar
         gf = _detectar_grupo_familiar(mensaje)
         if gf:
@@ -221,13 +301,11 @@ class ConversationManager:
                 cantidad_hijos=gf["cantidad_hijos"],
             )
 
-        # Detectar si menciona cobertura actual
         from app.services.lead_qualifier import _detectar_tipo_afiliacion
         tipo = _detectar_tipo_afiliacion(mensaje)
         if tipo:
             lead.tipo_afiliacion = tipo
 
-        # Avanzar a calificación
         session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
 
         return (
@@ -240,48 +318,43 @@ class ConversationManager:
         lead = session.lead
         lead.estado_comercial = EstadoComercial.CALIFICANDO
 
-        # Usar LeadQualifier para extraer datos
         resultado = self.qualifier.process_message(lead, mensaje)
         session.mensajes_en_etapa += 1
 
-        # Detectar objeciones durante calificación
         objecion = analizar_mensaje(mensaje, lead)
         if objecion.es_objecion:
             lead.estado_comercial = EstadoComercial.OBJECION
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
-        # Si tiene suficiente información para generar valor
         if self._lead_listo_para_valor(lead):
             lead.estado_comercial = EstadoComercial.INTERESADO
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
             return generar_argumento(lead)
 
-        # Si hay siguiente pregunta, continuar calificando
         if resultado.proxima_pregunta:
             return self._generar_siguiente_pregunta(lead, resultado.proxima_pregunta)
 
-        # Si no hay más preguntas pero falta algo, reforzar
         if session.mensajes_en_etapa > 6:
             lead.estado_comercial = EstadoComercial.INTERESADO
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
             return generar_argumento(lead)
 
-        return self._generar_siguiente_pregunta(lead, resultado.proxima_pregunta or "nombre")
+        return self._generar_siguiente_pregunta(
+            lead, resultado.proxima_pregunta or "nombre"
+        )
 
     def _handle_valor(self, session: UserSession, mensaje: str) -> str:
         """Maneja la etapa de generación de valor."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.INTERESADO
 
-        # Detectar objeciones
         objecion = analizar_mensaje(mensaje, lead)
         if objecion.es_objecion:
             lead.estado_comercial = EstadoComercial.OBJECION
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
-        # Detectar interés en avanzar
         if any(p in mensaje.lower() for p in [
             "sí", "si", "dale", "avanzamos", "ok", "quiero",
         ]):
@@ -291,7 +364,6 @@ class ConversationManager:
             session.intento_de_cierre = True
             return cierre.respuesta
 
-        # Continuar presentando valor desde knowledge
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 3:
             lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
@@ -300,7 +372,6 @@ class ConversationManager:
             session.intento_de_cierre = True
             return cierre.respuesta
 
-        # Usar knowledge para dar más detalle
         beneficios = self.knowledge.obtener_beneficios()
         if beneficios:
             return (
@@ -317,13 +388,11 @@ class ConversationManager:
         lead = session.lead
         lead.estado_comercial = EstadoComercial.OBJECION
 
-        # Volver a analizar por si la objeción persiste
         objecion = analizar_mensaje(mensaje, lead)
 
         if objecion.es_objecion:
             session.mensajes_en_etapa += 1
             if session.mensajes_en_etapa >= 3:
-                # Muchas objeciones → derivar a asesor
                 lead.estado_comercial = EstadoComercial.SEGUIMIENTO
                 session.avanzar_etapa(EtapaConversacion.CALIFICADO)
                 return (
@@ -331,13 +400,11 @@ class ConversationManager:
                     "Un asesor especializado puede darte una atención más personalizada. "
                     "¿Te parece si coordinamos una llamada?"
                 )
-            # Usar knowledge para respuestas más completas
             respuesta_knowledge = self.knowledge.obtener_respuesta_objecion(mensaje)
             if respuesta_knowledge:
                 return f"{objecion.respuesta} {respuesta_knowledge}"
             return objecion.respuesta or ""
 
-        # Si la objeción fue resuelta, volver al cierre
         lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
         session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
         cierre = intentar_cierre(lead)
@@ -369,7 +436,6 @@ class ConversationManager:
                 "¡Éxitos! 😊"
             )
 
-        # PENDIENTE → usar recuperación de indecisos
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 2:
             lead.estado_comercial = EstadoComercial.SEGUIMIENTO
@@ -380,7 +446,6 @@ class ConversationManager:
                 "¿Dejamos un contacto?"
             )
 
-        # Intentar recuperar indeciso
         return recuperar_indeciso(lead)
 
     # ─────────────────────────────────────────
@@ -392,13 +457,15 @@ class ConversationManager:
         return (
             lead.nombre is not None
             and lead.tipo_afiliacion is not None
-            and (lead.grupo_familiar.conyuge or lead.grupo_familiar.hijos or lead.cantidad_integrantes >= 1)
+            and (
+                lead.grupo_familiar.conyuge
+                or lead.grupo_familiar.hijos
+                or lead.cantidad_integrantes >= 1
+            )
         )
 
     def _generar_siguiente_pregunta(self, lead: Lead, proxima_pregunta: str) -> str:
         """Genera el texto de la siguiente pregunta."""
-        nombre = lead.nombre or ""
-
         preguntas = {
             "nombre": "¿Cómo te llamás?",
             "tipo_afiliacion": generar_pregunta_situacion_actual(),
@@ -414,7 +481,7 @@ class ConversationManager:
         return preguntas.get(proxima_pregunta, "¿Podés contarme un poco más?")
 
     # ─────────────────────────────────────────
-    # IA helpers
+    # IA helpers — AIService decide tono, empatía, persuasión
     # ─────────────────────────────────────────
 
     def _wrap_ia(self, respuesta: str, session: UserSession, mensaje: str) -> str:
@@ -468,13 +535,26 @@ class ConversationManager:
             return respuesta_logica
 
         knowledge = self._obtener_knowledge_para_etapa(lead, etapa, mensaje)
-        return self.ai.generar_respuesta(
+
+        logger.debug(
+            "[AI] Generando respuesta — etapa=%s, knowledge_len=%d, msg=%s",
+            etapa.value, len(knowledge), mensaje[:40],
+        )
+
+        resultado = self.ai.generar_respuesta(
             lead=lead,
             etapa=etapa,
             knowledge=knowledge,
             mensaje_cliente=mensaje,
             respuesta_fallback=respuesta_logica,
         )
+
+        logger.debug(
+            "[AI] Respuesta generada (%d chars) — fallback_used=%s",
+            len(resultado), resultado == respuesta_logica,
+        )
+
+        return resultado
 
     # ─────────────────────────────────────────
     # DB helpers
@@ -492,14 +572,21 @@ class ConversationManager:
                     session.lead = lead_domain
                     if lead_db.etapa_conversacion:
                         try:
-                            session.etapa = EtapaConversacion(lead_db.etapa_conversacion)
+                            session.etapa = EtapaConversacion(
+                                lead_db.etapa_conversacion
+                            )
                         except ValueError:
                             pass
-                    logger.debug("Lead cargado desde DB: telegram_id=%s", telegram_id)
+                    logger.info(
+                        "[DATABASE] Lead cargado — id=%s, nombre=%s, etapa=%s, estado=%s",
+                        telegram_id, lead_domain.nombre,
+                        session.etapa.value,
+                        lead_domain.estado_comercial.value,
+                    )
             finally:
                 db.close()
         except Exception as e:
-            logger.warning("Error cargando lead desde DB: %s", e)
+            logger.warning("[DATABASE] Error cargando lead: %s", e)
 
     def _guardar_lead_en_db(
         self, telegram_id: int, lead: Lead, session: UserSession
@@ -515,10 +602,14 @@ class ConversationManager:
                 lead_repo.lead_domain_a_db(lead, lead_db)
                 lead_db.etapa_conversacion = session.etapa.value
                 lead_repo.actualizar_lead(lead_db)
+                logger.debug(
+                    "[DATABASE] Lead guardado — id=%s, etapa=%s",
+                    telegram_id, session.etapa.value,
+                )
             finally:
                 db.close()
         except Exception as e:
-            logger.warning("Error guardando lead en DB: %s", e)
+            logger.warning("[DATABASE] Error guardando lead: %s", e)
 
     def _guardar_mensaje_en_db(
         self,
@@ -541,7 +632,11 @@ class ConversationManager:
                         respuesta_sofia=respuesta,
                         etapa=session.etapa.value,
                     )
+                    logger.debug(
+                        "[DATABASE] Mensaje guardado — lead_id=%d, etapa=%s",
+                        lead_db.id, session.etapa.value,
+                    )
             finally:
                 db.close()
         except Exception as e:
-            logger.warning("Error guardando mensaje en DB: %s", e)
+            logger.warning("[DATABASE] Error guardando mensaje: %s", e)
