@@ -34,7 +34,7 @@ from app.services.session_manager import (
     SessionManager,
     UserSession,
 )
-from app.services.lead_qualifier import LeadQualifierService
+from app.services.lead_qualifier import LeadQualifierService, clasificar_intencion
 from app.services.sales_strategy import (
     generar_argumento,
     generar_presentacion_inicial,
@@ -227,15 +227,36 @@ class ConversationManager:
     # ─────────────────────────────────────────
 
     def _handle_nuevo(self, session: UserSession, mensaje: str) -> str:
-        """Primer mensaje: saluda y pide nombre. NO avanza de etapa hasta tener nombre."""
+        """Primer mensaje: saluda, pide nombre, detecta intención comercial."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.CONTACTADO
 
         from app.services.lead_qualifier import _extraer_nombre
         nombre = _extraer_nombre(mensaje)
 
+        intencion = clasificar_intencion(mensaje)
+        tiene_intencion_comercial = intencion != InteresDetectado.INFORMACION_GENERAL
+
         if nombre:
             lead.nombre = nombre
+            lead.interes_detectado = intencion
+
+            if tiene_intencion_comercial:
+                logger.info(
+                    "[SALES] Intención comercial detectada en NUEVO — user=%s, "
+                    "intención=%s, saltando a recolección agresiva",
+                    session.telegram_id, intencion.value,
+                )
+                lead.estado_comercial = EstadoComercial.CALIFICANDO
+                session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
+                return (
+                    f"¡Hola {nombre}! Soy Sofía 😊, asesora de Servired. "
+                    f"Vi que buscaste {intencion.value.replace('_', ' ')}. "
+                    "Para prepararte la mejor propuesta, necesito saber: "
+                    "¿cuántos somos en familia y cómo es tu situación laboral "
+                    "(relación de dependencia, monotributo o particular)?"
+                )
+
             session.avanzar_etapa(EtapaConversacion.DESCUBRIENDO_NECESIDAD)
             logger.info(
                 "[LEAD] Lead nuevo — id=%s, nombre=%s",
@@ -247,7 +268,20 @@ class ConversationManager:
                 f"Decime {nombre}, ¿la cobertura sería para vos o tu familia?"
             )
 
-        # Sin nombre → quedarse en NUEVO y pedir nombre
+        if tiene_intencion_comercial:
+            lead.interes_detectado = intencion
+            lead.estado_comercial = EstadoComercial.CALIFICANDO
+            session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
+            return (
+                "¡Hola! Soy Sofía 😊, asesora de Servired. "
+                f"Vi que buscaste {intencion.value.replace('_', ' ')}. "
+                "Para prepararte la mejor propuesta, necesito saber: "
+                "¿cuántos somos en familia, cómo es tu situación laboral "
+                "(relación de dependencia, monotributo o particular) y "
+                "cómo te llamás?"
+            )
+
+        # Sin nombre y sin intención → quedarse en NUEVO y pedir nombre
         logger.debug("[LEAD] Esperando nombre de user=%s", session.telegram_id)
         return (
             "¡Hola! Soy Sofía 😊, asesora de Servired. "
@@ -319,7 +353,10 @@ class ConversationManager:
             else:
                 return "¿Cómo te llamás?"
 
-        from app.services.lead_qualifier import _detectar_grupo_familiar
+        from app.services.lead_qualifier import (
+            _detectar_grupo_familiar,
+            _detectar_tipo_afiliacion,
+        )
         gf = _detectar_grupo_familiar(mensaje)
         if gf:
             lead.actualizar_grupo_familiar(
@@ -328,10 +365,38 @@ class ConversationManager:
                 cantidad_hijos=gf["cantidad_hijos"],
             )
 
-        from app.services.lead_qualifier import _detectar_tipo_afiliacion
         tipo = _detectar_tipo_afiliacion(mensaje)
         if tipo:
             lead.tipo_afiliacion = tipo
+
+        # Si ya tiene intención comercial, hacer recolección agresiva
+        tiene_intencion = (
+            lead.interes_detectado is not None
+            and lead.interes_detectado != InteresDetectado.INFORMACION_GENERAL
+        )
+
+        if tiene_intencion and (gf or tipo):
+            session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
+            faltantes = []
+            if lead.tipo_afiliacion is None:
+                faltantes.append(
+                    "cómo es tu situación laboral (relación de dependencia, "
+                    "monotributo o particular)"
+                )
+            if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
+                faltantes.append("si la cobertura sería solo para vos o incluye familia")
+
+            if faltantes:
+                return (
+                    f"¡Genial {lead.nombre}! "
+                    f"Necesito saber: {', '.join(faltantes)}. "
+                    "Así te preparo la mejor propuesta."
+                )
+
+            if self._lead_listo_para_valor(lead):
+                lead.estado_comercial = EstadoComercial.INTERESADO
+                session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
+                return generar_argumento(lead)
 
         session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
 
@@ -417,12 +482,13 @@ class ConversationManager:
         beneficios = self.knowledge.obtener_beneficios()
         if beneficios:
             return (
-                f"¿Te gustaría que te cuente más detalles sobre nuestros beneficios "
-                "o preferís que avancemos?"
+                "Te cuento que nuestros planes incluyen consultas, estudios, "
+                "odontología y más. Si querés, avanzamos con la afiliación."
             )
 
         return (
-            "¿Te gustaría que te cuente más detalles o preferís que avancemos?"
+            "Si querés, avanzamos con la afiliación. "
+            "Necesito unos datos más para preparar tu propuesta."
         )
 
     def _handle_objeciones(self, session: UserSession, mensaje: str) -> str:
@@ -440,7 +506,7 @@ class ConversationManager:
                 return (
                     f"{lead.nombre or 'Hola'}, entiendo que tenés algunas dudas. "
                     "Un asesor especializado puede darte una atención más personalizada. "
-                    "¿Te parece si coordinamos una llamada?"
+                    "Dejame tu número y coordinamos una llamada."
                 )
             respuesta_knowledge = self.knowledge.obtener_respuesta_objecion(mensaje)
             if respuesta_knowledge:
@@ -480,13 +546,13 @@ class ConversationManager:
 
         session.mensajes_en_etapa += 1
         if session.mensajes_en_etapa >= 2:
-            lead.estado_comercial = EstadoComercial.SEGUIMIENTO
-            session.avanzar_etapa(EtapaConversacion.CALIFICADO)
-            return (
-                f"{lead.nombre or 'Hola'}, entiendo que necesitás tiempo. "
-                "Un asesor puede contactarte cuando estés listo. "
-                "¿Dejamos un contacto?"
-            )
+                lead.estado_comercial = EstadoComercial.SEGUIMIENTO
+                session.avanzar_etapa(EtapaConversacion.CALIFICADO)
+                return (
+                    f"{lead.nombre or 'Hola'}, entiendo que necesitás tiempo. "
+                    "Un asesor puede contactarte cuando estés listo. "
+                    "Dejame tu número y te contactamos."
+                )
 
         return recuperar_indeciso(lead)
 
@@ -612,7 +678,27 @@ class ConversationManager:
         )
 
     def _generar_siguiente_pregunta(self, lead: Lead, proxima_pregunta: str) -> str:
-        """Genera el texto de la siguiente pregunta."""
+        """Genera el texto de la siguiente pregunta. Combina preguntas cuando es posible."""
+        # Si tenemos varios campos faltantes y el lead tiene intención, combinar
+        faltantes = []
+        if lead.tipo_afiliacion is None:
+            faltantes.append("tu situación laboral (relación de dependencia, monotributo o particular)")
+        if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
+            faltantes.append("si la cobertura sería solo para vos o incluye familia")
+        if lead.edad is None:
+            faltantes.append("cuántos años tenés")
+
+        tiene_intencion = (
+            lead.interes_detectado is not None
+            and lead.interes_detectado != InteresDetectado.INFORMACION_GENERAL
+        )
+
+        if tiene_intencion and len(faltantes) >= 2:
+            return (
+                f"Necesito saber: {faltantes[0]} y {faltantes[1]}. "
+                "Así te preparo la mejor propuesta."
+            )
+
         preguntas = {
             "nombre": "¿Cómo te llamás?",
             "tipo_afiliacion": generar_pregunta_situacion_actual(),

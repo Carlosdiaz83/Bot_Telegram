@@ -99,7 +99,13 @@ class TestCaso1_ConversacionInteresada:
 
         # Calificación — situación actual
         r3 = manager.procesar_mensaje(tid, "Soy monotributista")
-        assert "monotributo" in r3.lower() or "monotribut" in r3.lower() or "¿" in r3
+        r3_lower = r3.lower()
+        assert (
+            "monotributo" in r3_lower
+            or "monotribut" in r3_lower
+            or "familia" in r3_lower
+            or "integrantes" in r3_lower
+        )
 
         # Calificación — seguir respondiendo
         r4 = manager.procesar_mensaje(tid, "Sí, tengo aportes")
@@ -678,7 +684,14 @@ class TestKnowledgeIntegracion:
         manager.procesar_mensaje(tid, "Solo para mí")
         manager.procesar_mensaje(tid, "Relación de dependencia")
         r = manager.procesar_mensaje(tid, "¿Por qué debería elegir Servired?")
-        assert "servired" in r.lower() or "beneficio" in r.lower() or "?" in r
+        r_lower = r.lower()
+        assert (
+            "servired" in r_lower
+            or "beneficio" in r_lower
+            or "planes" in r_lower
+            or "consultas" in r_lower
+            or "?" in r
+        )
 
     def test_caso_avanzar_usa_cierre(self, manager: ConversationManager) -> None:
         """Cliente listo para avanzar → debe usar cierre."""

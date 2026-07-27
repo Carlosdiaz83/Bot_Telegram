@@ -77,7 +77,7 @@ def _argumento_precio(lead: Lead) -> str:
         f"¡Perfecto {nombre}! Entiendo que el presupuesto es importante. "
         "En Servired tenemos opciones que se adaptan a distintos presupuestos "
         "para que puedas acceder a una cobertura sin pagar de más. "
-        "¿Querés que te cuente las alternativas que tenemos?"
+        "Te preparo las opciones que mejor se ajustan a tu presupuesto."
     )
 
 
@@ -89,7 +89,7 @@ def _argumento_familiar(lead: Lead) -> str:
         f"¡Qué bueno {nombre}! Proteger a la familia es lo más importante. "
         f"Con Servired podemos armar una cobertura para los {integrantes} integrantes "
         "de tu grupo familiar, para que todos tengan la tranquilidad que merecen. "
-        "¿Querés que veamos juntos las opciones?"
+        "Te muestro las opciones que protegen a toda tu familia."
     )
 
 
@@ -100,7 +100,7 @@ def _argumento_calidad(lead: Lead) -> str:
         f"¡Excelente {nombre}! Si buscás una cobertura completa, "
         "Servired tiene planes que te dan acceso a una amplia red de prestadores "
         "y beneficios integral para que estés tranquilo. "
-        "¿Te gustaría que te cuente los detalles?"
+        "Te cuento los detalles de lo que incluye cada plan."
     )
 
 
@@ -110,7 +110,7 @@ def _argumento_beneficios(lead: Lead) -> str:
     return (
         f"¡Genial {nombre}! Servired ofrece muchos beneficios: "
         "acceso a consultas, estudios, odontología y más. "
-        "¿Querés que te cuente en detalle qué incluye cada plan?"
+        "Te explico exactamente qué incluye cada plan."
     )
 
 
@@ -120,7 +120,7 @@ def _argumento_prestadores(lead: Lead) -> str:
     return (
         f"¡Perfecto {nombre}! Servired tiene una amplia red de prestadores "
         "para que puedas elegir dónde atenderte. "
-        "¿Hay algún prestador o zona en particular que necesites?"
+        "Te confirmo si tu prestador está cubierto."
     )
 
 
@@ -130,7 +130,7 @@ def _argumento_monotributista(lead: Lead) -> str:
     return (
         f"¡Hola {nombre}! Como monotributista, Servired tiene opciones pensadas "
         "para vos. Podés acceder a una cobertura que se adapte a tu situación "
-        "y la de tu familia. ¿Querés que veamos las alternativas?"
+        "y la de tu familia. Te muestro las opciones para monotributistas."
     )
 
 
@@ -140,7 +140,7 @@ def _argumento_empresa(lead: Lead) -> str:
     return (
         f"¡Hola {nombre}! Para empresas, Servired ofrece planes grupales "
         "con beneficios para vos y tus empleados. Es una excelente forma "
-        "de cuidar a tu equipo. ¿Querés que te cuente las opciones?"
+        "de cuidar a tu equipo. Te presento las opciones para tu empresa."
     )
 
 
@@ -150,7 +150,7 @@ def _argumento_generico(lead: Lead) -> str:
     return (
         f"¡Hola {nombre}! Servired tiene diversas opciones de cobertura "
         "para que puedas elegir la que mejor se adapte a tus necesidades. "
-        "¿Querés que te cuente las alternativas que tenemos?"
+        "Te cuento las alternativas que tenemos."
     )
 
 

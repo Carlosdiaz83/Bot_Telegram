@@ -70,7 +70,7 @@ _INTENCION_PALABRAS: dict[InteresDetectado, list[str]] = {
     ],
     InteresDetectado.BENEFICIOS: [
         "beneficio", "beneficios", "ventajas", "qué incluye", "que incluye",
-        "qué offerce", "que offerce", "servicios",
+        "qué ofrece", "que ofrece", "servicios",
     ],
     InteresDetectado.EMPRESA: [
         "empresa", "empleados", "empleador", "comercio", "local", "negocio",

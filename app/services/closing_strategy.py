@@ -48,21 +48,21 @@ class CierreComercial:
 # ─────────────────────────────────────────────
 
 def _cierre_directo(lead: Lead) -> str:
-    """Cierre directo: pregunta si quiere avanzar."""
+    """Cierre directo: avanza con la afiliación."""
     nombre = lead.nombre or "Hola"
     return (
         f"Perfecto {nombre}, con lo que me contaste creo que podemos ayudarte. "
-        "¿Querés que avancemos con la afiliación?"
+        "Avanzo con el proceso de afiliación."
     )
 
 
 def _cierre_alternativo(lead: Lead) -> str:
-    """Cierre alternativo: ofrece dos opciones."""
+    """Cierre alternativo: ofrece dos opciones de forma directa."""
     nombre = lead.nombre or "Hola"
     return (
         f"{nombre}, tenemos dos caminos: podemos avanzar ahora con la afiliación "
         "o coordinar un momento más tranquilo para completar la información. "
-        "¿Qué preferís?"
+        "Si querés, avanzo ahora. Si preferís, coordinamos una llamada."
     )
 
 
@@ -82,7 +82,7 @@ def _cierre_beneficio(lead: Lead) -> str:
     return (
         f"{nombre}, con tu perfil podemos armar una cobertura para los "
         f"{integrantes} integrantes de tu grupo familiar. "
-        "¿Querés que iniciemos el proceso ahora?"
+        "Iniciamos el proceso ahora para que tu familia quede cubierta."
     )
 
 
@@ -112,7 +112,7 @@ def recuperar_indeciso(lead: Lead) -> str:
         return (
             f"Tranquilo {nombre}, no es una decisión complicada. "
             "Lo que sí es importante es que tu familia esté cubierta. "
-            "¿Qué te gustaría aclarar para sentirte más tranquilo?"
+            "Dejame tu número y te contactamos para avanzar."
         )
 
     # Si es sensible al precio, reforzar accesibilidad
@@ -121,14 +121,13 @@ def recuperar_indeciso(lead: Lead) -> str:
         return (
             f"Entiendo {nombre}, el presupuesto es importante. "
             "Justamente por eso te cuente que tenemos opciones que se adaptan a distintos presupuestos. "
-            "¿Querés que veamos juntos la alternativa que mejor se ajuste?"
+            "Te preparo la alternativa que mejor se ajuste a tu presupuesto."
         )
 
     # Default: ofrecer siguiente paso simple
     return (
         f"No te preocupes {nombre}, no es nada complicado. "
-        "Lo que podemos hacer es dejarme tus datos y un asesor te contacta cuando estés listo. "
-        "¿Te parece?"
+        "Dejame tus datos y un asesor te contacta cuando estés listo."
     )
 
 

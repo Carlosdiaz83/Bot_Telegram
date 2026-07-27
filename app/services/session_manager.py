@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 class EtapaConversacion(str, Enum):
     """Etapas del flujo comercial."""
     NUEVO = "nuevo"
+    ESPERANDO_NOMBRE = "esperando_nombre"
+    ESPERANDO_GRUPO_FAMILIAR = "esperando_grupo_familiar"
+    ESPERANDO_TIPO_AFILIACION = "esperando_tipo_afiliacion"
+    ESPERANDO_RECIBO = "esperando_recibo"
+    ESPERANDO_CATEGORIA_MONOTRIBUTO = "esperando_categoria_monotributo"
+    ESPERANDO_EDADES = "esperando_edades"
     DESCUBRIENDO_NECESIDAD = "descubriendo_necesidad"
     CALIFICANDO = "calificando"
     PRESENTANDO_VALOR = "presentando_valor"
