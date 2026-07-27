@@ -73,11 +73,13 @@ async def lifespan(app: FastAPI):
         _config = BotConfig.from_env()
         logger.info("Config cargada (env=%s, token=%s...)", _config.app_env, _config.telegram_token[:10])
 
-    # Iniciar DB
+    # Iniciar DB + migraciones
     logger.info("Inicializando base de datos...")
     from app.database.database import get_engine, crear_tablas
+    from app.database.migrations import ejecutar_migraciones
     engine = get_engine(_config.database_url)
     crear_tablas(engine)
+    ejecutar_migraciones(engine)
     logger.info("Base de datos lista")
 
     # Iniciar Telegram bot en hilo daemon
