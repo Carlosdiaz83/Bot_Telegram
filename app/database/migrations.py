@@ -85,6 +85,7 @@ def ejecutar_migraciones(engine: Optional[Engine] = None) -> None:
 
 
 if __name__ == "__main__":
+    import os
     import sys
 
     logging.basicConfig(
@@ -94,7 +95,8 @@ if __name__ == "__main__":
 
     try:
         from app.database.database import get_engine
-        engine = get_engine()
+        database_url = os.environ.get("DATABASE_URL")
+        engine = get_engine(database_url)
         ejecutar_migraciones(engine)
         print("Migraciones completadas.")
     except Exception as e:

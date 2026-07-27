@@ -467,11 +467,12 @@ def main() -> int:
         print(f"Error: Archivo no encontrado: {ruta}")
         return 1
 
+    import os
     from app.database.database import get_engine, get_session_factory, crear_tablas
 
     logger.info("Conectando a la base de datos...")
-    # DATABASE_URL comes from env (Render sets it automatically)
-    engine = get_engine()
+    database_url = os.environ.get("DATABASE_URL")
+    engine = get_engine(database_url)
     crear_tablas(engine)
     SessionLocal = get_session_factory(engine)
     db = SessionLocal()
