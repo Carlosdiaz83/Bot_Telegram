@@ -127,7 +127,7 @@ def recuperar_indeciso(lead: Lead) -> str:
     # Default: ofrecer siguiente paso simple
     return (
         f"No te preocupes {nombre}, no es nada complicado. "
-        "Dejame tus datos y un asesor te contacta cuando estés listo."
+        "Cuando quieras seguimos, estoy acá para ayudarte."
     )
 
 

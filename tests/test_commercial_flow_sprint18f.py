@@ -209,7 +209,7 @@ class TestLenguajeAsertivoCierres:
         lead = _lead_base(nombre="Roberto")
         texto = recuperar_indeciso(lead)
         self._assert_no_passive(texto)
-        assert "datos" in texto.lower() or "asesor" in texto.lower()
+        assert "seguimos" in texto.lower() or "ayudarte" in texto.lower()
 
 
 # ─────────────────────────────────────────

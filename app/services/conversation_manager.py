@@ -587,9 +587,8 @@ class ConversationManager:
         if lead.localidad is None:
             faltantes.append("de qué localidad sos")
 
-        if lead.tipo_afiliacion == TipoAfiliacion.PARTICULAR:
-            if lead.edad is None:
-                faltantes.append("cuántos años tenés")
+        if lead.edad is None:
+            faltantes.append("cuántos años tenés")
 
         if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
             if lead.categoria_monotributo is None:
@@ -598,6 +597,11 @@ class ConversationManager:
         if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
             if not lead.tiene_recibo_sueldo:
                 faltantes.append("si tenés el recibo de sueldo a mano")
+            elif not lead.conceptos_obra_social:
+                faltantes.append(
+                    "los conceptos de obra social del recibo "
+                    "(ej: $15.000, $8.000)"
+                )
 
         return faltantes
 
@@ -644,6 +648,11 @@ class ConversationManager:
         if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
             if self._detectar_recibo_sueldo(mensaje):
                 lead.tiene_recibo_sueldo = True
+                # Extraer conceptos solo cuando el mensaje menciona recibo
+                if not lead.conceptos_obra_social:
+                    conceptos = self._extraer_conceptos_obra_social(mensaje)
+                    if conceptos:
+                        lead.conceptos_obra_social = conceptos
 
         # Verificar si falta algo
         faltantes = self._datos_faltantes_para_cotizar(lead)
@@ -691,6 +700,7 @@ class ConversationManager:
             lead=lead,
             zona=zona,
             nombre_plan=nombre_plan,
+            conceptos_obra_social=lead.conceptos_obra_social or None,
         )
 
         propuesta = self._calculator.generar_propuesta_texto(resultado)

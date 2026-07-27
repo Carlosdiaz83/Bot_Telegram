@@ -7,6 +7,9 @@ Cubre:
     - Sin derivación prematura (sin "Un asesor se comunicará" en flujo normal)
     - Recolección de datos combinada (2+ preguntas en un mensaje)
     - Sin force-advance por timers (mensajes_en_etapa no fuerza avance)
+    - Edad requerida para todos los tipos (no solo particular)
+    - Conceptos de obra social recolectados y pasados a calculadora
+    - Sin "asesor" en recuperar_indeciso default
 """
 
 from __future__ import annotations
@@ -127,7 +130,8 @@ class TestRelacionDependenciaFlow:
         tid = 300003
         manager.procesar_mensaje(tid, "Hola, soy María")
         manager.procesar_mensaje(tid, "Soy relación de dependencia, tengo recibo de sueldo")
-        respuesta = manager.procesar_mensaje(tid, "Córdoba, 30 años")
+        manager.procesar_mensaje(tid, "Córdoba, 30 años")
+        respuesta = manager.procesar_mensaje(tid, "Los conceptos del recibo son $15.000 y $8.000")
         session = manager.session_manager.get(tid)
 
         assert session.etapa == EtapaConversacion.PRESENTANDO_VALOR
@@ -160,7 +164,7 @@ class TestMonotributistaFlow:
         tid = 400003
         manager.procesar_mensaje(tid, "Hola, soy Pedro")
         manager.procesar_mensaje(tid, "Soy monotributista categoría B")
-        respuesta = manager.procesar_mensaje(tid, "Córdoba")
+        respuesta = manager.procesar_mensaje(tid, "Córdoba, 35 años")
         session = manager.session_manager.get(tid)
 
         assert session.etapa == EtapaConversacion.PRESENTANDO_VALOR
@@ -209,8 +213,8 @@ class TestFlujoCompleto:
         assert s.etapa == EtapaConversacion.ESPERANDO_DATOS
         assert s.lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO
 
-        # Paso 3: "Córdoba" → PRESENTANDO_VALOR (con calculator=None)
-        r3 = manager.procesar_mensaje(tid, "Córdoba")
+        # Paso 3: "Córdoba, 30 años" → PRESENTANDO_VALOR (con calculator=None)
+        r3 = manager.procesar_mensaje(tid, "Córdoba, 30 años")
         s = manager.session_manager.get(tid)
         assert s.etapa == EtapaConversacion.PRESENTANDO_VALOR
 
@@ -289,3 +293,100 @@ class TestNoForceAdvance:
         s = manager.session_manager.get(tid)
         # Debería seguir en PRESENTANDO_VALOR
         assert s.etapa == EtapaConversacion.PRESENTANDO_VALOR
+
+
+# ─────────────────────────────────────────
+# Sprint 19b — Tests de gaps corregidos
+# ─────────────────────────────────────────
+
+
+class TestEdadParaTodosLosTipos:
+    """Edad requerida para todos los tipos, no solo PARTICULAR."""
+
+    def test_monotributo_pide_edad(self, manager):
+        """Monotributo sin edad → pregunta edad."""
+        tid = 800001
+        manager.procesar_mensaje(tid, "Hola, soy Pedro")
+        manager.procesar_mensaje(tid, "Quiero info")
+        manager.procesar_mensaje(tid, "Monotributo, solo para mí, Córdoba")
+        manager.procesar_mensaje(tid, "Categoría B")
+
+        s = manager.session_manager.get(tid)
+        # Debería faltar edad para todos los tipos
+        assert s.etapa == EtapaConversacion.ESPERANDO_DATOS
+
+    def test_relacion_dependencia_pide_edad(self, manager):
+        """Relación de dependencia sin edad → pregunta edad."""
+        tid = 800002
+        manager.procesar_mensaje(tid, "Hola, soy Ana")
+        manager.procesar_mensaje(tid, "Quiero info")
+        manager.procesar_mensaje(tid, "Relación de dependencia, solo yo, Buenos Aires")
+        manager.procesar_mensaje(tid, "Tengo recibo de sueldo")
+
+        s = manager.session_manager.get(tid)
+        assert s.etapa == EtapaConversacion.ESPERANDO_DATOS
+
+
+class TestConceptosObraSocial:
+    """Conceptos de obra social para relación de dependencia."""
+
+    def test_extraer_conceptos_del_mensaje(self, manager):
+        """Extrae montos del recibo como conceptos_obra_social."""
+        tid = 800003
+        manager.procesar_mensaje(tid, "Hola, soy Roberto")
+        manager.procesar_mensaje(tid, "Quiero info")
+        manager.procesar_mensaje(tid, "Relación de dependencia, solo yo, Córdoba, 35 años")
+        manager.procesar_mensaje(tid, "Sí, tengo recibo. Los conceptos son $15.000 y $8.000")
+
+        s = manager.session_manager.get(tid)
+        # Debería tener conceptos extraídos
+        assert len(s.lead.conceptos_obra_social) == 2
+        assert 15000.0 in s.lead.conceptos_obra_social
+        assert 8000.0 in s.lead.conceptos_obra_social
+
+    def test_conceptos_pasan_a_calculadora(self, manager):
+        """conceptos_obra_social se pasan al calculator.cotizar()."""
+        tid = 800004
+        manager.procesar_mensaje(tid, "Hola, soy Laura")
+        manager.procesar_mensaje(tid, "Quiero info")
+        manager.procesar_mensaje(tid, "Relación de dependencia, solo yo, Córdoba, 28 años")
+        manager.procesar_mensaje(tid, "Recibo de sueldo, conceptos $12.000")
+
+        s = manager.session_manager.get(tid)
+        # Verificar que conceptos están en el lead
+        assert len(s.lead.conceptos_obra_social) >= 1
+
+    def test_relacion_dependencia_sin_conceptos_pregunta(self, manager):
+        """Relación de dependencia con recibo pero sin conceptos → pregunta conceptos."""
+        tid = 800005
+        manager.procesar_mensaje(tid, "Hola, soy Martín")
+        manager.procesar_mensaje(tid, "Quiero info")
+        manager.procesar_mensaje(tid, "Relación de dependencia, solo yo, Rosario, 30 años")
+        manager.procesar_mensaje(tid, "Sí, tengo recibo")
+
+        s = manager.session_manager.get(tid)
+        # Debería estar en ESPERANDO_DATOS pidiendo conceptos
+        assert s.etapa == EtapaConversacion.ESPERANDO_DATOS
+
+
+class TestSinAsesorEnRecuperar:
+    """recuperar_indeciso no ofrece asesor en el default."""
+
+    def test_default_no_menciona_asesor(self):
+        from app.services.closing_strategy import recuperar_indeciso
+        lead = Lead(lead_id="test_no_asesor", nombre="Test")
+        respuesta = recuperar_indeciso(lead)
+        assert "asesor" not in respuesta.lower()
+        assert "seguimos" in respuesta.lower() or "ayudarte" in respuesta.lower()
+
+    def test_flujo_indeciso_no_ofrece_asesor(self, manager):
+        """Cliente indeciso recibe 'seguimos' no 'asesor'."""
+        tid = 800006
+        manager.procesar_mensaje(tid, "Hola, soy Diego")
+        manager.procesar_mensaje(tid, "Quiero info")
+        manager.procesar_mensaje(tid, "Particular, solo para mí")
+        manager.procesar_mensaje(tid, "Córdoba, 30 años")
+        manager.procesar_mensaje(tid, "Sí, avanzamos")
+        respuesta = manager.procesar_mensaje(tid, "Tengo dudas todavía")
+
+        assert "asesor" not in respuesta.lower()

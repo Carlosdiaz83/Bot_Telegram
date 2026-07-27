@@ -148,6 +148,7 @@ class Lead(BaseModel):
     categoria_monotributo: str | None = None
     tiene_aportes: bool | None = None
     tiene_recibo_sueldo: bool | None = None
+    conceptos_obra_social: list[float] = Field(default_factory=list)
 
     # Datos SERVIRED — Grupo familiar
     grupo_familiar: GrupoFamiliar = Field(default_factory=GrupoFamiliar)
