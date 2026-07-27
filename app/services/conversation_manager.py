@@ -54,6 +54,7 @@ from app.services.closing_strategy import (
 from app.services.knowledge_service import KnowledgeService
 from app.services.knowledge_engine import KnowledgeEngine
 from app.services.lead_scoring import LeadScoringService
+from app.services.servired_calculator import ServiredCalculator
 from app.ai.service import AIService
 from app.database.database import get_engine, get_session_factory, crear_tablas
 from app.database.repository import ConversationRepository, LeadRepository
@@ -86,11 +87,14 @@ class ConversationManager:
             crear_tablas(engine)
             self._db_factory = get_session_factory(engine)
             # KnowledgeEngine usa la DB para retrieval de conocimiento
-            self._knowledge_engine = KnowledgeEngine(self._db_factory())
-            logger.info("[DATABASE] ConversationManager con DB habilitada + KnowledgeEngine")
+            db_session = self._db_factory()
+            self._knowledge_engine = KnowledgeEngine(db_session)
+            self._calculator = ServiredCalculator(db_session)
+            logger.info("[DATABASE] ConversationManager con DB habilitada + KnowledgeEngine + Calculator")
         else:
             self._db_factory = None
             self._knowledge_engine = None
+            self._calculator = None
             logger.info("[DATABASE] ConversationManager sin DB (solo memoria)")
 
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
@@ -331,6 +335,21 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
+        # Detectar si menciona recibo de sueldo
+        if self._detectar_recibo_sueldo(mensaje):
+            lead.tiene_recibo_sueldo = True
+            session.en_cotizacion = True
+            return (
+                f"¡Perfecto {lead.nombre or ''}! Para calcular tu cotización "
+                "necesito los conceptos de obra social de tu recibo de sueldo. "
+                "Por favor, indicame los montos que figuran como "
+                "'Obra Social', 'Aportes Obra Social' o similar."
+            )
+
+        # Si estamos en proceso de cotización, extraer conceptos
+        if getattr(session, 'en_cotizacion', False):
+            return self._handle_cotizacion(session, mensaje)
+
         if self._lead_listo_para_valor(lead):
             lead.estado_comercial = EstadoComercial.INTERESADO
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
@@ -455,6 +474,111 @@ class ConversationManager:
     # ─────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────
+
+    def _detectar_recibo_sueldo(self, mensaje: str) -> bool:
+        """Detecta si el mensaje menciona recibo de sueldo."""
+        keywords = [
+            "recibo de sueldo", "recibo", "sueldo", "boleta de pago",
+            "conceptos obra social", "aportes obra social",
+            "descuentos de obra social", "tengo recibo",
+        ]
+        mensaje_lower = mensaje.lower()
+        return any(kw in mensaje_lower for kw in keywords)
+
+    def _extraer_conceptos_obra_social(self, mensaje: str) -> list[float]:
+        """
+        Extrae montos de conceptos de obra social de un mensaje.
+
+        Busca patrones como:
+            - "$15.000" o "$15000"
+            - "15000" o "15.000"
+            - "obrasocial 15000"
+        """
+        import re
+        montos: list[float] = []
+
+        # Buscar montos con formato "$XX.XXX" o "$XXXXX"
+        patron_dolar = re.findall(r'\$?([\d.,]+)', mensaje)
+        for monto_str in patron_dolar:
+            monto_limpio = monto_str.replace(".", "").replace(",", ".")
+            try:
+                monto = float(monto_limpio)
+                if monto > 0:
+                    montos.append(monto)
+            except ValueError:
+                continue
+
+        # Si no encontró con $, buscar números sueltos que parezcan montos
+        if not montos:
+            patron_numeros = re.findall(r'(\d{3,})', mensaje)
+            for num_str in patron_numeros:
+                try:
+                    num = float(num_str)
+                    if num >= 100:
+                        montos.append(num)
+                except ValueError:
+                    continue
+
+        logger.debug(
+            "[CONVERSATION] Conceptos obra social extraídos: %s",
+            montos,
+        )
+        return montos
+
+    def _handle_cotizacion(self, session: UserSession, mensaje: str) -> str:
+        """Maneja el proceso de cotización cuando el cliente tiene recibo."""
+        lead = session.lead
+        conceptos = self._extraer_conceptos_obra_social(mensaje)
+
+        if not conceptos:
+            return (
+                "No pude identificar los montos en tu mensaje. "
+                "Por favor, indicame los valores de los conceptos de obra social "
+                "de tu recibo de sueldo. Por ejemplo: '$15000, $5000'"
+            )
+
+        # Determinar zona
+        zona = "cordoba"
+        if lead.localidad:
+            localidad_lower = lead.localidad.lower()
+            if "cordoba" not in localidad_lower:
+                zona = "interior"
+
+        # Determinar plan sugerido según perfil
+        nombre_plan = "medimax"
+        if lead.prioridad_cliente and lead.prioridad_cliente.value == "completo":
+            nombre_plan = "medimax gold"
+        elif lead.prioridad_cliente and lead.prioridad_cliente.value == "economico":
+            nombre_plan = "medimax co"
+
+        # Calcular cotización
+        if self._calculator is None:
+            return (
+                "Para realizar la cotización necesito acceso a la base de datos. "
+                "Por favor, intentá más tarde o contactá a un asesor."
+            )
+
+        resultado = self._calculator.cotizar(
+            lead=lead,
+            conceptos_obra_social=conceptos,
+            zona=zona,
+            nombre_plan=nombre_plan,
+        )
+
+        # Generar propuesta
+        propuesta = self._calculator.generar_propuesta_texto(resultado)
+
+        # Avanzar etapa
+        session.en_cotizacion = False
+        lead.estado_comercial = EstadoComercial.INTERESADO
+        session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
+
+        logger.info(
+            "[CONVERSATION] Cotización generada — user=%s, plan=%s, a_pagar=%.2f",
+            session.telegram_id, resultado.plan, resultado.valor_a_pagar,
+        )
+
+        return propuesta
 
     def _lead_listo_para_valor(self, lead: Lead) -> bool:
         """Determina si el lead tiene suficiente información para generar valor."""

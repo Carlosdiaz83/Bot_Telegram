@@ -63,6 +63,7 @@ class UserSession:
         self.intento_de_cierre: bool = False
         self.resultado_cierre: ResultadoCierre | None = None
         self.mensajes_en_etapa: int = 0
+        self.en_cotizacion: bool = False
 
     def actualizar_interaccion(self) -> None:
         """Registra la hora de la última interacción."""
