@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
-from app.database.repository import KnowledgeRepository
+from app.database.repository import KnowledgeRepository, PriceRepository
 from app.models.lead import Lead
 
 logger = logging.getLogger(__name__)
@@ -97,8 +97,15 @@ class ServiredCalculator:
     Los precios se obtienen de la base de conocimiento.
     """
 
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, price_repository: PriceRepository | None = None) -> None:
+        """
+        Args:
+            db: Sesión de base de datos.
+            price_repository: Repositorio de precios estructurados (opcional).
+                              Si se provee, se usa como fuente principal de precios.
+        """
         self._repo = KnowledgeRepository(db)
+        self._price_repo = price_repository
 
     # ─────────────────────────────────────────
     # Cálculo de aportes
@@ -173,6 +180,48 @@ class ServiredCalculator:
     # ─────────────────────────────────────────
     # Obtención de precios desde knowledge
     # ─────────────────────────────────────────
+
+    def _obtener_precio_tabla(
+        self,
+        tipo_afiliacion: str,
+        nombre_plan: str,
+        zona: str,
+        edad: int | None = None,
+    ) -> float | None:
+        """
+        Busca precio en la tabla estructurada ServiredPriceDB.
+
+        Método principal de obtención de precios cuando se tiene
+        PriceRepository disponible.
+
+        Args:
+            tipo_afiliacion: particular|monotributo|relacion_dependencia
+            nombre_plan: Nombre normalizado del plan
+            zona: cordoba|interior
+            edad: Edad del integrante (opcional)
+
+        Returns:
+            Precio encontrado, o None.
+        """
+        if self._price_repo is None:
+            return None
+
+        precio_db = self._price_repo.buscar_precio(
+            tipo_afiliacion=tipo_afiliacion,
+            plan=nombre_plan,
+            zona=zona,
+            edad=edad,
+        )
+
+        if precio_db:
+            logger.debug(
+                "[CALCULATOR] Precio desde tabla: tipo=%s, plan=%s, zona=%s, "
+                "edad=%s -> $%.2f",
+                tipo_afiliacion, nombre_plan, zona, edad, precio_db.precio,
+            )
+            return precio_db.precio
+
+        return None
 
     def _obtener_precios_plan(
         self, nombre_plan: str, zona: str
@@ -342,20 +391,48 @@ class ServiredCalculator:
         nombre_plan: str,
         zona: str,
         edades: list[int],
+        tipo_afiliacion: str = "particular",
     ) -> float | None:
         """
         Calcula el valor total del plan para un grupo de integrantes.
 
-        Consulta la base de conocimiento para obtener precios.
+        Usa PriceRepository si está disponible, fallback a KnowledgeRepository.
 
         Args:
             nombre_plan: Nombre del plan (ej: "medimax").
             zona: "cordoba" o "interior".
             edades: Lista de edades de los integrantes.
+            tipo_afiliacion: particular|monotributo|relacion_dependencia
 
         Returns:
             Valor total del plan, o None si no se encontraron precios.
         """
+        precio_total = 0.0
+        integrantes_con_precio = 0
+
+        # Intentar con PriceRepository (precio por integrante)
+        if self._price_repo is not None:
+            for edad in edades:
+                precio = self._obtener_precio_tabla(
+                    tipo_afiliacion=tipo_afiliacion,
+                    nombre_plan=nombre_plan,
+                    zona=zona,
+                    edad=edad,
+                )
+                if precio is not None:
+                    precio_total += precio
+                    integrantes_con_precio += 1
+
+            if integrantes_con_precio > 0:
+                logger.info(
+                    "[CALCULATOR] Valor plan (tabla): plan='%s', zona='%s', "
+                    "tipo=%s, integrantes=%d/%d, total=%.2f",
+                    nombre_plan, zona, tipo_afiliacion,
+                    integrantes_con_precio, len(edades), precio_total,
+                )
+                return precio_total if precio_total > 0 else None
+
+        # Fallback: KnowledgeRepository (precio base * cantidad)
         precios = self._obtener_precios_plan(nombre_plan, zona)
         if precios is None:
             return None
@@ -364,19 +441,17 @@ class ServiredCalculator:
         precio_base = precios.get(zona_lower)
 
         if precio_base is None:
-            # Fallback: intentar con cualquier zona disponible
             precio_base = next(iter(precios.values()), None)
 
         if precio_base is None:
             return None
 
-        # Calcular valor total: precio_base * cantidad de integrantes
         cantidad = len(edades) if edades else 1
         valor_total = precio_base * cantidad
 
         logger.info(
-            "[CALCULATOR] Valor plan: plan='%s', zona='%s', precio_base=%.2f, "
-            "integrantes=%d, total=%.2f",
+            "[CALCULATOR] Valor plan (knowledge): plan='%s', zona='%s', "
+            "precio_base=%.2f, integrantes=%d, total=%.2f",
             nombre_plan, zona, precio_base, cantidad, valor_total,
         )
         return valor_total
@@ -408,6 +483,11 @@ class ServiredCalculator:
         integrantes = self._construir_integrantes(lead)
         edades = [i.edad for i in integrantes]
 
+        # Detectar tipo de afiliación
+        tipo_afiliacion = "particular"
+        if lead.tipo_afiliacion:
+            tipo_afiliacion = lead.tipo_afiliacion.value
+
         # Verificar Plan Joven
         plan_joven_disponible, plan_joven_rechazado = self.verificar_plan_joven(edades)
 
@@ -417,7 +497,9 @@ class ServiredCalculator:
         )
 
         # Calcular valor del plan
-        valor_plan = self.calcular_valor_plan(nombre_plan, zona, edades)
+        valor_plan = self.calcular_valor_plan(
+            nombre_plan, zona, edades, tipo_afiliacion,
+        )
         if valor_plan is None:
             valor_plan = 0.0
             observaciones = [
@@ -433,14 +515,31 @@ class ServiredCalculator:
         # Desglose por integrante
         desglose = []
         if valor_plan > 0 and integrantes:
-            precio_por_integrante = valor_plan / len(integrantes)
-            for integrante in integrantes:
-                desglose.append({
-                    "nombre": integrante.nombre,
-                    "edad": integrante.edad,
-                    "valor": round(precio_por_integrante, 2),
-                    "es_titular": integrante.es_titular,
-                })
+            if self._price_repo is not None:
+                # Usar precios individuales de la tabla
+                for integrante in integrantes:
+                    precio_individual = self._obtener_precio_tabla(
+                        tipo_afiliacion=tipo_afiliacion,
+                        nombre_plan=nombre_plan,
+                        zona=zona,
+                        edad=integrante.edad,
+                    )
+                    desglose.append({
+                        "nombre": integrante.nombre,
+                        "edad": integrante.edad,
+                        "valor": round(precio_individual or 0.0, 2),
+                        "es_titular": integrante.es_titular,
+                    })
+            else:
+                # Fallback: dividir el total entre integrantes
+                precio_por_integrante = valor_plan / len(integrantes)
+                for integrante in integrantes:
+                    desglose.append({
+                        "nombre": integrante.nombre,
+                        "edad": integrante.edad,
+                        "valor": round(precio_por_integrante, 2),
+                        "es_titular": integrante.es_titular,
+                    })
 
         # Observaciones
         if aportes > valor_plan and valor_plan > 0:

@@ -25,7 +25,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.models import ConversationMessageDB, LeadDB
+from app.database.models import ConversationMessageDB, LeadDB, ServiredPriceDB
 from app.models.lead import (
     EstadoComercial,
     GrupoFamiliar,
@@ -600,3 +600,308 @@ class KnowledgeRepository:
                         partes.append(item.contenido[:200])
 
         return "\n\n".join(partes) if partes else ""
+
+
+class PriceRepository:
+    """
+    Repositorio de precios SERVIRED por tipo de afiliación, plan y zona.
+
+    Maneja precios estructurados importados desde archivos Excel.
+    Soporta consultas por tipo de afiliación, plan, zona y rango de edad.
+    """
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def crear(
+        self,
+        tipo_afiliacion: str,
+        plan: str,
+        zona: str,
+        precio: float,
+        edad_desde: int = 0,
+        edad_hasta: int = 99,
+        fuente: str = "",
+    ) -> ServiredPriceDB:
+        """
+        Crea un registro de precio.
+
+        Args:
+            tipo_afiliacion: particular|monotributo|relacion_dependencia
+            plan: Nombre del plan (medimax_co, medimax, etc.)
+            zona: cordoba|interior
+            precio: Monto del precio
+            edad_desde: Edad mínima del rango (default: 0)
+            edad_hasta: Edad máxima del rango (default: 99)
+            fuente: Archivo de origen
+        """
+        precio_db = ServiredPriceDB(
+            tipo_afiliacion=tipo_afiliacion,
+            plan=plan,
+            zona=zona,
+            precio=precio,
+            edad_desde=edad_desde,
+            edad_hasta=edad_hasta,
+            fuente=fuente,
+        )
+        self._db.add(precio_db)
+        self._db.commit()
+        self._db.refresh(precio_db)
+
+        logger.debug(
+            "[PRICE_REPO] Creado: tipo=%s, plan=%s, zona=%s, edad=%d-%d, precio=%.2f",
+            tipo_afiliacion, plan, zona, edad_desde, edad_hasta, precio,
+        )
+        return precio_db
+
+    def bulk_crear(self, precios: list[dict]) -> int:
+        """
+        Crea múltiples registros de precio en lote.
+
+        Args:
+            precios: Lista de diccionarios con los campos del precio.
+
+        Returns:
+            Cantidad de registros creados.
+        """
+        if not precios:
+            return 0
+
+        registros = []
+        for data in precios:
+            registro = ServiredPriceDB(
+                tipo_afiliacion=data["tipo_afiliacion"],
+                plan=data["plan"],
+                zona=data["zona"],
+                precio=data["precio"],
+                edad_desde=data.get("edad_desde", 0),
+                edad_hasta=data.get("edad_hasta", 99),
+                fuente=data.get("fuente", ""),
+            )
+            registros.append(registro)
+
+        self._db.add_all(registros)
+        self._db.commit()
+
+        logger.info("[PRICE_REPO] Creados %d registros de precio", len(registros))
+        return len(registros)
+
+    def buscar_precio(
+        self,
+        tipo_afiliacion: str,
+        plan: str,
+        zona: str,
+        edad: int | None = None,
+    ) -> ServiredPriceDB | None:
+        """
+        Busca un precio exacto por tipo de afiliación, plan, zona y edad.
+
+        Si se especifica edad, busca el precio cuyo rango contenga la edad.
+        Si no se especifica edad, busca el precio sin restricción de edad.
+
+        Args:
+            tipo_afiliacion: particular|monotributo|relacion_dependencia
+            plan: Nombre del plan
+            zona: cordoba|interior
+            edad: Edad del integrante (opcional)
+
+        Returns:
+            ServiredPriceDB o None si no existe.
+        """
+        stmt = (
+            select(ServiredPriceDB)
+            .where(
+                ServiredPriceDB.activo == True,  # noqa: E712
+                ServiredPriceDB.tipo_afiliacion == tipo_afiliacion,
+                ServiredPriceDB.plan == plan,
+                ServiredPriceDB.zona == zona,
+            )
+        )
+
+        if edad is not None:
+            stmt = stmt.where(
+                ServiredPriceDB.edad_desde <= edad,
+                ServiredPriceDB.edad_hasta >= edad,
+            )
+
+        stmt = stmt.order_by(ServiredPriceDB.edad_desde)
+        result = self._db.execute(stmt).scalar_one_or_none()
+
+        logger.debug(
+            "[PRICE_REPO] Buscado: tipo=%s, plan=%s, zona=%s, edad=%s -> %s",
+            tipo_afiliacion, plan, zona, edad,
+            f"precio={result.precio}" if result else "no encontrado",
+        )
+        return result
+
+    def buscar_todos(
+        self,
+        tipo_afiliacion: str | None = None,
+        plan: str | None = None,
+        zona: str | None = None,
+    ) -> list[ServiredPriceDB]:
+        """
+        Busca todos los precios que coincidan con los filtros.
+
+        Args:
+            tipo_afiliacion: Filtro por tipo de afiliación (opcional)
+            plan: Filtro por plan (opcional)
+            zona: Filtro por zona (opcional)
+
+        Returns:
+            Lista de precios encontrados.
+        """
+        stmt = select(ServiredPriceDB).where(
+            ServiredPriceDB.activo == True,  # noqa: E712
+        )
+
+        if tipo_afiliacion:
+            stmt = stmt.where(
+                ServiredPriceDB.tipo_afiliacion == tipo_afiliacion,
+            )
+        if plan:
+            stmt = stmt.where(
+                ServiredPriceDB.plan == plan,
+            )
+        if zona:
+            stmt = stmt.where(
+                ServiredPriceDB.zona == zona,
+            )
+
+        stmt = stmt.order_by(
+            ServiredPriceDB.tipo_afiliacion,
+            ServiredPriceDB.plan,
+            ServiredPriceDB.zona,
+            ServiredPriceDB.edad_desde,
+        )
+
+        result = self._db.execute(stmt).scalars().all()
+        return list(result)
+
+    def buscar_por_clave(
+        self,
+        tipo_afiliacion: str,
+        plan: str,
+        zona: str,
+        edad_desde: int,
+        edad_hasta: int,
+    ) -> ServiredPriceDB | None:
+        """
+        Busca un precio por su clave compuesta (sin filtro de activo).
+
+        Args:
+            tipo_afiliacion: particular|monotributo|relacion_dependencia
+            plan: Nombre normalizado del plan
+            zona: cordoba|interior
+            edad_desde: Edad mínima del rango
+            edad_hasta: Edad máxima del rango
+
+        Returns:
+            ServiredPriceDB o None si no existe.
+        """
+        stmt = select(ServiredPriceDB).where(
+            ServiredPriceDB.tipo_afiliacion == tipo_afiliacion,
+            ServiredPriceDB.plan == plan,
+            ServiredPriceDB.zona == zona,
+            ServiredPriceDB.edad_desde == edad_desde,
+            ServiredPriceDB.edad_hasta == edad_hasta,
+        )
+        return self._db.execute(stmt).scalar_one_or_none()
+
+    def upsert(
+        self,
+        tipo_afiliacion: str,
+        plan: str,
+        zona: str,
+        precio: float,
+        edad_desde: int = 0,
+        edad_hasta: int = 99,
+        fuente: str = "",
+    ) -> tuple[str, ServiredPriceDB]:
+        """
+        Inserta o actualiza un registro de precio.
+
+        Busca por clave compuesta (tipo_afiliacion + plan + zona +
+        edad_desde + edad_hasta). Si existe y el precio cambió, lo
+        actualiza. Si no existe, lo crea.
+
+        Args:
+            tipo_afiliacion: particular|monotributo|relacion_dependencia
+            plan: Nombre normalizado del plan
+            zona: cordoba|interior
+            precio: Monto del precio
+            edad_desde: Edad mínima del rango
+            edad_hasta: Edad máxima del rango
+            fuente: Archivo de origen
+
+        Returns:
+            Tupla (accion, registro) donde accion es "created",
+            "updated" o "unchanged".
+        """
+        existente = self.buscar_por_clave(
+            tipo_afiliacion, plan, zona, edad_desde, edad_hasta,
+        )
+
+        if existente is not None:
+            if abs(existente.precio - precio) < 0.01:
+                # Precio sin cambios — solo actualizar fuente/fecha
+                existente.fuente = fuente
+                self._db.commit()
+                self._db.refresh(existente)
+                return ("unchanged", existente)
+
+            # Precio cambió — actualizar
+            existente.precio = precio
+            existente.fuente = fuente
+            self._db.commit()
+            self._db.refresh(existente)
+            logger.debug(
+                "[PRICE_REPO] Actualizado: tipo=%s, plan=%s, zona=%s, "
+                "edad=%d-%d, precio=%.2f -> %.2f",
+                tipo_afiliacion, plan, zona, edad_desde, edad_hasta,
+                existente.precio, precio,
+            )
+            return ("updated", existente)
+
+        # No existe — crear
+        nuevo = ServiredPriceDB(
+            tipo_afiliacion=tipo_afiliacion,
+            plan=plan,
+            zona=zona,
+            precio=precio,
+            edad_desde=edad_desde,
+            edad_hasta=edad_hasta,
+            fuente=fuente,
+        )
+        self._db.add(nuevo)
+        self._db.commit()
+        self._db.refresh(nuevo)
+        return ("created", nuevo)
+
+    def eliminar_por_fuente(self, fuente: str) -> int:
+        """
+        Elimina todos los precios de una fuente específica.
+
+        Útil para reimportar datos de un archivo Excel.
+
+        Args:
+            fuente: Nombre del archivo de origen.
+
+        Returns:
+            Cantidad de registros eliminados.
+        """
+        stmt = select(ServiredPriceDB).where(
+            ServiredPriceDB.fuente == fuente,
+        )
+        precios = list(self._db.execute(stmt).scalars().all())
+        cantidad = len(precios)
+
+        for precio in precios:
+            self._db.delete(precio)
+
+        self._db.commit()
+        logger.info(
+            "[PRICE_REPO] Eliminados %d precios de fuente '%s'",
+            cantidad, fuente,
+        )
+        return cantidad

@@ -17,6 +17,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -176,6 +177,64 @@ class ServiredKnowledgeDB(Base):
         return (
             f"<ServiredKnowledgeDB(id={self.id}, categoria='{self.categoria}', "
             f"titulo='{self.titulo}')>"
+        )
+
+
+class ServiredPriceDB(Base):
+    """
+    Tabla de precios SERVIRED por tipo de afiliación, plan, zona y edad.
+
+    Almacena precios estructurados importados desde archivos Excel.
+    Cada fila representa un precio específico para un组合 de:
+    - Tipo de afiliación (particular, monotributo, relación de dependencia)
+    - Plan (Medimax CO, Medimax, Medimax Gold, Gold, Plan Joven)
+    - Zona (Córdoba, Interior)
+    - Rango de edad del integrante
+    """
+
+    __tablename__ = "servired_prices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    tipo_afiliacion = Column(
+        String(50),
+        nullable=False,
+        index=True,
+        comment="particular|monotributo|relacion_dependencia",
+    )
+    plan = Column(
+        String(100),
+        nullable=False,
+        index=True,
+        comment="medimax_co|medimax|medimax_gold|gold|plan_joven",
+    )
+    zona = Column(
+        String(20),
+        nullable=False,
+        index=True,
+        comment="cordoba|interior",
+    )
+    edad_desde = Column(Integer, default=0, nullable=False)
+    edad_hasta = Column(Integer, default=99, nullable=False)
+    precio = Column(Float, nullable=False)
+    activo = Column(Boolean, default=True, nullable=False, index=True)
+    fuente = Column(
+        String(200),
+        nullable=True,
+        comment="Archivo Excel de origen",
+    )
+    fecha_actualizacion = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ServiredPriceDB(id={self.id}, tipo='{self.tipo_afiliacion}', "
+            f"plan='{self.plan}', zona='{self.zona}', "
+            f"edad={self.edad_desde}-{self.edad_hasta}, "
+            f"precio={self.precio})>"
         )
 
 

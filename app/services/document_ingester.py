@@ -54,10 +54,18 @@ class DocumentIngester:
     Pipeline de ingestión de documentos para KnowledgeEngine.
 
     Convierte archivos en registros de ServiredKnowledgeDB.
+    Para archivos Excel de precios, crea registros estructurados
+    en ServiredPriceDB.
     """
 
-    def __init__(self, knowledge_engine) -> None:
+    def __init__(self, knowledge_engine, price_repository=None) -> None:
+        """
+        Args:
+            knowledge_engine: KnowledgeEngine para documentos de texto.
+            price_repository: PriceRepository para precios Excel (opcional).
+        """
         self._engine = knowledge_engine
+        self._price_repo = price_repository
 
     # ─────────────────────────────────────────
     # Ingesta por tipo de archivo
@@ -282,6 +290,264 @@ class DocumentIngester:
             item_id, titulo, categoria, len(rows) - 1,
         )
         return item_id
+
+    # ─────────────────────────────────────────
+    # Ingesta de precios estructurados
+    # ─────────────────────────────────────────
+
+    def ingestir_xlsx_precios(
+        self,
+        ruta_archivo: str | Path,
+        tipo_afiliacion: str,
+    ) -> int:
+        """
+        Ingesta un archivo Excel de precios como registros estructurados.
+
+        Crea registros en ServiredPriceDB en lugar de ServiredKnowledgeDB.
+        Cada fila del Excel se convierte en un registro de precio.
+
+        Formato esperado del Excel:
+        - Hoja: nombre del tipo de afiliación (particular, monotributo, etc.)
+        - Columna A: Nombre del plan
+        - Columnas siguientes: precios por zona/rango de edad
+          (ej: "18-30 Córdoba", "18-30 Interior", "31+ Córdoba", "31+ Interior")
+          O simplificado: "Córdoba", "Interior"
+
+        Args:
+            ruta_archivo: Ruta al archivo .xlsx
+            tipo_afiliacion: particular|monotributo|relacion_dependencia
+
+        Returns:
+            Cantidad de registros de precio creados.
+        """
+        if self._price_repo is None:
+            raise ValueError(
+                "Se requiere PriceRepository para ingestar precios. "
+                "Inicializá DocumentIngester con price_repository."
+            )
+
+        ruta = Path(ruta_archivo)
+        if not ruta.exists():
+            raise FileNotFoundError(f"Archivo no encontrado: {ruta}")
+
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            raise NotImplementedError(
+                "Para ingestar XLSX, instalá openpyxl: pip install openpyxl"
+            )
+
+        logger.info(
+            "[DOC] XLSX precios encontrado: %s (tipo=%s)",
+            ruta.name, tipo_afiliacion,
+        )
+
+        wb = load_workbook(str(ruta), read_only=True, data_only=True)
+
+        precios_creados = 0
+
+        # Procesar cada hoja del libro
+        for ws in wb.worksheets:
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                continue
+
+            # Detectar columnas del header
+            header = [str(c).strip() if c else "" for c in rows[0]]
+
+            # Buscar columna de plan
+            idx_plan = self._buscar_columna_plan(header)
+            if idx_plan == -1:
+                logger.warning(
+                    "[DOC] No se encontró columna de plan en hoja '%s'",
+                    ws.title,
+                )
+                continue
+
+            # Mapear columnas de precios (zonas/rangos de edad)
+            columnas_precio = self._mapear_columnas_precio(header, idx_plan)
+
+            if not columnas_precio:
+                logger.warning(
+                    "[DOC] No se encontraron columnas de precio en hoja '%s'",
+                    ws.title,
+                )
+                continue
+
+            # Procesar filas de datos
+            for row in rows[1:]:
+                if not row or not any(row):
+                    continue
+
+                plan_nombre = str(row[idx_plan]).strip() if row[idx_plan] else ""
+                if not plan_nombre or plan_nombre.lower() in ("plan", "planes", ""):
+                    continue
+
+                plan_normalizado = self._normalizar_nombre_plan(plan_nombre)
+
+                for col_info in columnas_precio:
+                    valor = row[col_info["idx"]]
+                    if valor is None:
+                        continue
+
+                    try:
+                        precio = self._parsear_precio(valor)
+                    except (ValueError, TypeError):
+                        continue
+
+                    if precio <= 0:
+                        continue
+
+                    # Crear registro de precio
+                    self._price_repo.crear(
+                        tipo_afiliacion=tipo_afiliacion,
+                        plan=plan_normalizado,
+                        zona=col_info["zona"],
+                        precio=precio,
+                        edad_desde=col_info.get("edad_desde", 0),
+                        edad_hasta=col_info.get("edad_hasta", 99),
+                        fuente=ruta.name,
+                    )
+                    precios_creados += 1
+
+        wb.close()
+
+        logger.info(
+            "[DOC] Precios creados: %d registros (tipo=%s, archivo=%s)",
+            precios_creados, tipo_afiliacion, ruta.name,
+        )
+        return precios_creados
+
+    def _buscar_columna_plan(self, header: list[str]) -> int:
+        """Busca el índice de la columna que contiene el nombre del plan."""
+        keywords_plan = ["plan", "planes", "nombre", "producto"]
+        for i, col in enumerate(header):
+            col_lower = col.lower().strip()
+            if col_lower in keywords_plan:
+                return i
+            for kw in keywords_plan:
+                if kw in col_lower:
+                    return i
+        return -1
+
+    def _mapear_columnas_precio(
+        self, header: list[str], idx_plan: int
+    ) -> list[dict]:
+        """
+        Mapea las columnas de precio del header.
+
+        Detecta automáticamente el formato:
+        - Simplificado: "Córdoba", "Interior"
+        - Con rango: "18-30 Córdoba", "31+ Interior"
+        - Completo: "Particulares 18-30 Córdoba"
+
+        Returns:
+            Lista de dicts con zona, edad_desde, edad_hasta, idx.
+        """
+        import re
+
+        columnas = []
+
+        for i, col in enumerate(header):
+            if i == idx_plan:
+                continue
+
+            col_lower = col.lower().strip()
+            if not col_lower:
+                continue
+
+            info = {"idx": i, "zona": "", "edad_desde": 0, "edad_hasta": 99}
+
+            # Detectar zona
+            if "córdoba" in col_lower or "cordoba" in col_lower:
+                info["zona"] = "cordoba"
+            elif "interior" in col_lower:
+                info["zona"] = "interior"
+            else:
+                # Si no detecta zona, saltar esta columna
+                continue
+
+            # Detectar rango de edad
+            patron_edad = re.search(r'(\d+)[\s]*[-+][\s]*(\d+|\+)?', col_lower)
+            if patron_edad:
+                edad_min = int(patron_edad.group(1))
+                if "+" in col_lower:
+                    info["edad_desde"] = edad_min
+                    info["edad_hasta"] = 99
+                elif patron_edad.group(2):
+                    edad_max = int(patron_edad.group(2))
+                    info["edad_desde"] = edad_min
+                    info["edad_hasta"] = edad_max
+
+            columnas.append(info)
+
+        return columnas
+
+    def _normalizar_nombre_plan(self, nombre: str) -> str:
+        """
+        Normaliza el nombre del plan a formato estándar.
+
+        Ejemplos:
+            - "Medimax CO" -> "medimax_co"
+            - "Medimax Gold" -> "medimax_gold"
+            - "Gold" -> "gold"
+            - "Plan Joven" -> "plan_joven"
+        """
+        nombre_lower = nombre.lower().strip()
+        nombre_limpio = nombre_lower.replace(" ", "_")
+
+        # Mapeo de nombres comunes
+        mapeo = {
+            "medimax_co": "medimax_co",
+            "medimaxco": "medimax_co",
+            "medimax_co_": "medimax_co",
+            "medimax": "medimax",
+            "medimax_gold": "medimax_gold",
+            "medimaxgold": "medimax_gold",
+            "gold": "gold",
+            "plan_joven": "plan_joven",
+            "joven": "plan_joven",
+        }
+
+        return mapeo.get(nombre_limpio, nombre_limpio)
+
+    def _parsear_precio(self, valor) -> float:
+        """
+        Parsea un valor a precio float.
+
+        Acepta:
+        - Números directos (int/float)
+        - Strings con formato: "$15.000", "15.000", "15,5"
+        """
+        if isinstance(valor, (int, float)):
+            return float(valor)
+
+        if isinstance(valor, str):
+            # Limpiar formato argentino
+            valor_limpio = valor.strip()
+            valor_limpio = valor_limpio.replace("$", "")
+            valor_limpio = valor_limpio.replace(" ", "")
+
+            # Formato argentino: 15.000 -> 15000, 15,5 -> 15.5
+            if "." in valor_limpio and "," in valor_limpio:
+                # 1.234,56 -> 1234.56
+                valor_limpio = valor_limpio.replace(".", "").replace(",", ".")
+            elif "," in valor_limpio:
+                # 15,5 -> 15.5
+                valor_limpio = valor_limpio.replace(",", ".")
+            elif "." in valor_limpio:
+                # 15.000 -> 15000 (asumimos que es separador de miles)
+                partes = valor_limpio.split(".")
+                if len(partes) > 2:
+                    # 15.000.000 -> 15000000
+                    valor_limpio = "".join(partes)
+                # Si tiene exactamente 1 punto y 3 dígitos después, es separador de miles
+                elif len(partes[1]) == 3:
+                    valor_limpio = "".join(partes)
+
+            return float(valor_limpio)
+
+        return 0.0
 
     # ─────────────────────────────────────────
     # Ingesta masiva por carpeta
