@@ -1,0 +1,34 @@
+Planes SERVIRED - Resumen Ejecutivo
+====================================
+
+SERVIRED ofrece 4 planes principales de salud:
+
+1. Medimax CO
+   - Cobertura ambulatoria e internación
+   - Acceso a red de sanatorios
+   - Sin periodo de carencia
+   - Precio: desde $XX.XXX/mes
+
+2. Medimax
+   - Cobertura ambulatoria e internación
+   - Acceso a clínicas y sanatorios
+   - Sin periodo de carencia
+   - Precio: desde $XX.XXX/mes
+
+3. Medimax Gold
+   - Cobertura ambulatoria, internación y odontología
+   - Acceso premium a todas las clínicas
+   - Sin periodo de carencia
+   - Precio: desde $XX.XXX/mes
+
+4. Gold
+   - Cobertura completa ambulatoria, internación y odontología
+   - Acceso premium a toda la red
+   - Sin periodo de carencia
+   - Precio: desde $XX.XXX/mes
+
+Todos los planes incluyen:
+- Sin periods de carencia para consultas
+- Atención en consultorio y plataforma virtual
+- Cobertura en todo el país
+- Planes familiares disponibles
