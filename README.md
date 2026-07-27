@@ -320,3 +320,34 @@ El sistema analiza:
 ## Licencia
 
 MIT
+
+## Cómo actualizar precios SERVIRED
+
+El bot carga precios automáticamente desde un archivo Excel al deploy en Render. Para actualizar:
+
+1. Colocá el nuevo archivo `.xls` o `.xlsx` en `servired_knowledge/precios/`
+2. Si el nombre cambió, actualizá el `preDeployCommand` en `render.yaml`
+3. Hacé push a GitHub — Render ejecutará el importador automáticamente
+
+### Uso local
+
+```bash
+# Importar precios (requiere DATABASE_URL apuntando a una DB)
+export DATABASE_URL="sqlite:///./sofia.db"
+python -m app.services.price_importer servired_knowledge/precios/archivo.xlsx
+```
+
+### Formato del Excel
+
+| Hoja | tipo_afiliacion |
+|------|----------------|
+| PARTICULARES | particular |
+| MONOTRIBUTOS | monotributo |
+| RELACION DE DEPENDENCIA | relacion_dependencia |
+
+Cada hoja debe tener:
+- Columna con nombre del plan
+- Columnas de precio por zona (Córdoba / Interior)
+- Columnas con rango de edad
+
+El importador es **idempotente**: re-ejecutarlo no duplica registros, solo actualiza precios que cambiaron.
