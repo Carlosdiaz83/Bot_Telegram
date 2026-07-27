@@ -122,6 +122,7 @@ class Lead(BaseModel):
 
         # Datos SERVIRED
         tipo_afiliacion: Tipo de afiliación actual o deseada.
+        categoria_monotributo: Categoría de monotributo (A a K).
         tiene_aportes: Si cuenta con aportes previos.
         tiene_recibo_sueldo: Si tiene recibo de sueldo.
         grupo_familiar: Composición del grupo familiar.
@@ -144,6 +145,7 @@ class Lead(BaseModel):
 
     # Datos SERVIRED — Situación laboral
     tipo_afiliacion: TipoAfiliacion | None = None
+    categoria_monotributo: str | None = None
     tiene_aportes: bool | None = None
     tiene_recibo_sueldo: bool | None = None
 

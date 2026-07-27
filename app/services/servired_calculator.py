@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
-from app.database.repository import KnowledgeRepository, PriceRepository
+from app.database.repository import AportesMonotributoRepository, KnowledgeRepository, PriceRepository
 from app.models.lead import Lead
 
 logger = logging.getLogger(__name__)
@@ -97,15 +97,24 @@ class ServiredCalculator:
     Los precios se obtienen de la base de conocimiento.
     """
 
-    def __init__(self, db: Session, price_repository: PriceRepository | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        price_repository: PriceRepository | None = None,
+        aportes_monotributo_repository: AportesMonotributoRepository | None = None,
+    ) -> None:
         """
         Args:
             db: Sesión de base de datos.
             price_repository: Repositorio de precios estructurados (opcional).
                               Si se provee, se usa como fuente principal de precios.
+            aportes_monotributo_repository: Repositorio de aportes monotributo (opcional).
+                                            Si se provee, se usa para calcular aportes
+                                            cuando tipo_afiliacion = monotributo.
         """
         self._repo = KnowledgeRepository(db)
         self._price_repo = price_repository
+        self._aportes_mono_repo = aportes_monotributo_repository
 
     # ─────────────────────────────────────────
     # Cálculo de aportes
@@ -136,6 +145,46 @@ class ServiredCalculator:
             conceptos_obra_social, total_conceptos, aportes,
         )
         return round(aportes, 2)
+
+    # ─────────────────────────────────────────
+    # Aportes monotributo
+    # ─────────────────────────────────────────
+
+    def _calcular_aportes_monotributo(
+        self,
+        categoria: str | None,
+        cantidad_integrantes: int,
+    ) -> float:
+        """
+        Calcula aportes de monotributo desde la DB.
+
+        Regla: monto_de_categoria * cantidad_integrantes.
+
+        Args:
+            categoria: Letra de categoría (A-K) o None.
+            cantidad_integrantes: Número de personas en el grupo.
+
+        Returns:
+            Total de aportes. 0 si no se encontró la categoría.
+        """
+        if not categoria or self._aportes_mono_repo is None:
+            return 0.0
+
+        registro = self._aportes_mono_repo.buscar_por_categoria(categoria)
+        if registro is None:
+            logger.warning(
+                "[CALCULATOR] Categoría monotributo '%s' no encontrada en DB",
+                categoria,
+            )
+            return 0.0
+
+        total = registro.monto * cantidad_integrantes
+        logger.info(
+            "[CALCULATOR] Aportes monotributo: cat=%s, monto=%.2f, "
+            "integrantes=%d, total=%.2f",
+            categoria, registro.monto, cantidad_integrantes, total,
+        )
+        return round(total, 2)
 
     # ─────────────────────────────────────────
     # Detección de Plan Joven
@@ -492,9 +541,14 @@ class ServiredCalculator:
         plan_joven_disponible, plan_joven_rechazado = self.verificar_plan_joven(edades)
 
         # Calcular aportes
-        aportes = self.calcular_aportes(
-            conceptos_obra_social if conceptos_obra_social else []
-        )
+        aportes = 0.0
+        if tipo_afiliacion == "monotributo" and self._aportes_mono_repo is not None:
+            aportes = self._calcular_aportes_monotributo(
+                lead.categoria_monotributo,
+                len(integrantes),
+            )
+        elif conceptos_obra_social:
+            aportes = self.calcular_aportes(conceptos_obra_social)
 
         # Calcular valor del plan
         valor_plan = self.calcular_valor_plan(

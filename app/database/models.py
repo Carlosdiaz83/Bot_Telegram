@@ -54,6 +54,7 @@ class LeadDB(Base):
 
     # Datos SERVIRED — Situación laboral
     tipo_afiliacion = Column(String(50), nullable=True)
+    categoria_monotributo = Column(String(5), nullable=True)
     tiene_aportes = Column(Boolean, nullable=True)
     tiene_recibo_sueldo = Column(Boolean, nullable=True)
 
@@ -235,6 +236,46 @@ class ServiredPriceDB(Base):
             f"plan='{self.plan}', zona='{self.zona}', "
             f"edad={self.edad_desde}-{self.edad_hasta}, "
             f"precio={self.precio})>"
+        )
+
+
+class ServiredAportesMonotributoDB(Base):
+    """
+    Tabla de aportes mensuales de monotributo por categoría.
+
+    Cada fila representa el aporte mensual que un monotributista
+    debe pagar según su categoría (A a K). Estos valores se
+    importan desde archivos Excel en servired_knowledge/aportes/.
+    """
+
+    __tablename__ = "servired_aportes_monotributo"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    categoria = Column(
+        String(5),
+        unique=True,
+        nullable=False,
+        index=True,
+        comment="Categoría de monotributo: A, B, C, D, E, F, G, H, I, J, K",
+    )
+    monto = Column(Float, nullable=False, comment="Aporte mensual en pesos")
+    activo = Column(Boolean, default=True, nullable=False, index=True)
+    fuente = Column(
+        String(200),
+        nullable=True,
+        comment="Archivo Excel de origen",
+    )
+    fecha_actualizacion = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ServiredAportesMonotributoDB(id={self.id}, "
+            f"categoria='{self.categoria}', monto={self.monto})>"
         )
 
 

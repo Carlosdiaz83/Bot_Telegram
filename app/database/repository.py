@@ -25,7 +25,7 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database.models import ConversationMessageDB, LeadDB, ServiredPriceDB
+from app.database.models import ConversationMessageDB, LeadDB, ServiredAportesMonotributoDB, ServiredPriceDB
 from app.models.lead import (
     EstadoComercial,
     GrupoFamiliar,
@@ -137,6 +137,7 @@ class LeadRepository:
         lead_db.estado_comercial = lead.estado_comercial.value
         lead_db.interes_detectado = lead.interes_detectado.value if lead.interes_detectado else None
         lead_db.tipo_afiliacion = lead.tipo_afiliacion.value if lead.tipo_afiliacion else None
+        lead_db.categoria_monotributo = lead.categoria_monotributo
         lead_db.tiene_aportes = lead.tiene_aportes
         lead_db.tiene_recibo_sueldo = lead.tiene_recibo_sueldo
         lead_db.conyuge = lead.grupo_familiar.conyuge
@@ -173,6 +174,7 @@ class LeadRepository:
             estado_comercial=EstadoComercial(lead_db.estado_comercial) if lead_db.estado_comercial else EstadoComercial.NUEVO,
             interes_detectado=InteresDetectado(lead_db.interes_detectado) if lead_db.interes_detectado else None,
             tipo_afiliacion=TipoAfiliacion(lead_db.tipo_afiliacion) if lead_db.tipo_afiliacion else None,
+            categoria_monotributo=lead_db.categoria_monotributo,
             tiene_aportes=lead_db.tiene_aportes,
             tiene_recibo_sueldo=lead_db.tiene_recibo_sueldo,
             grupo_familiar=gf,
@@ -905,3 +907,93 @@ class PriceRepository:
             cantidad, fuente,
         )
         return cantidad
+
+
+class AportesMonotributoRepository:
+    """
+    Repositorio de aportes mensuales de monotributo por categoría.
+
+    Maneja la persistencia de los valores de aporte que cada
+    monotributista debe pagar según su categoría (A a K).
+    """
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def buscar_por_categoria(self, categoria: str) -> ServiredAportesMonotributoDB | None:
+        """
+        Busca el aporte mensual de una categoría de monotributo.
+
+        Args:
+            categoria: Letra de categoría (A, B, C, ..., K).
+
+        Returns:
+            ServiredAportesMonotributoDB o None si no existe.
+        """
+        stmt = select(ServiredAportesMonotributoDB).where(
+            ServiredAportesMonotributoDB.categoria == categoria.upper(),
+            ServiredAportesMonotributoDB.activo == True,  # noqa: E712
+        )
+        return self._db.execute(stmt).scalar_one_or_none()
+
+    def buscar_todos(self) -> list[ServiredAportesMonotributoDB]:
+        """
+        Retorna todas las categorías de aportes activas.
+
+        Returns:
+            Lista de aportes ordenados por categoría.
+        """
+        stmt = (
+            select(ServiredAportesMonotributoDB)
+            .where(ServiredAportesMonotributoDB.activo == True)  # noqa: E712
+            .order_by(ServiredAportesMonotributoDB.categoria)
+        )
+        return list(self._db.execute(stmt).scalars().all())
+
+    def upsert(
+        self,
+        categoria: str,
+        monto: float,
+        fuente: str = "",
+    ) -> tuple[str, ServiredAportesMonotributoDB]:
+        """
+        Inserta o actualiza un registro de aporte.
+
+        Args:
+            categoria: Letra de categoría (A-K).
+            monto: Monto mensual del aporte.
+            fuente: Archivo de origen.
+
+        Returns:
+            Tupla (accion, registro) donde accion es "created",
+            "updated" o "unchanged".
+        """
+        cat_upper = categoria.upper().strip()
+        existente = self.buscar_por_categoria(cat_upper)
+
+        if existente is not None:
+            if abs(existente.monto - monto) < 0.01:
+                existente.fuente = fuente
+                self._db.commit()
+                self._db.refresh(existente)
+                return ("unchanged", existente)
+
+            existente.monto = monto
+            existente.fuente = fuente
+            self._db.commit()
+            self._db.refresh(existente)
+            logger.debug(
+                "[APORTES_REPO] Actualizado: categoria=%s, monto=%.2f -> %.2f",
+                cat_upper, existente.monto, monto,
+            )
+            return ("updated", existente)
+
+        nuevo = ServiredAportesMonotributoDB(
+            categoria=cat_upper,
+            monto=monto,
+            fuente=fuente,
+        )
+        self._db.add(nuevo)
+        self._db.commit()
+        self._db.refresh(nuevo)
+        return ("created", nuevo)
