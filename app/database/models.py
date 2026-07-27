@@ -1,9 +1,12 @@
 """
-Modelos ORM de SQLAlchemy para persistencia de Leads, Conversaciones
-y Sesiones de Entrenamiento.
+Modelos ORM de SQLAlchemy para persistencia de Leads, Conversaciones,
+Sesiones de Entrenamiento y Base de Conocimiento SERVIRED.
 
 Uso:
-    from app.database.models import LeadDB, ConversationMessageDB, TrainingSessionDB
+    from app.database.models import (
+        LeadDB, ConversationMessageDB, TrainingSessionDB,
+        ServiredKnowledgeDB,
+    )
 """
 
 from __future__ import annotations
@@ -129,6 +132,51 @@ class ConversationMessageDB(Base):
 
     def __repr__(self) -> str:
         return f"<ConversationMessageDB(id={self.id}, lead_id={self.lead_id}, etapa={self.etapa})>"
+
+
+class ServiredKnowledgeDB(Base):
+    """
+    Base de conocimiento unificada SERVIRED.
+
+    Almacena toda la información que Sofía usa para vender y asesorar:
+    planes, precios, coberturas, beneficios, objeciones, cierres,
+    argumentos comerciales e información documental.
+
+    Una única fuente de verdad para la IA conversacional.
+    """
+
+    __tablename__ = "servired_knowledge"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    categoria = Column(
+        String(50),
+        nullable=False,
+        index=True,
+        comment="planes|precios|coberturas|beneficios|objeciones|cierres|argumentos|informacion",
+    )
+    titulo = Column(String(200), nullable=False, index=True)
+    contenido = Column(Text, nullable=False)
+    tags = Column(String(500), nullable=True, index=True, comment="CSV de tags para búsqueda")
+    fuente = Column(String(200), nullable=True, comment="Archivo markdown original o URL")
+    prioridad_comercial = Column(
+        Integer,
+        default=0,
+        nullable=False,
+        comment="Mayor número = mayor prioridad para retrieval",
+    )
+    activo = Column(Boolean, default=True, nullable=False, index=True)
+    fecha_actualizacion = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ServiredKnowledgeDB(id={self.id}, categoria='{self.categoria}', "
+            f"titulo='{self.titulo}')>"
+        )
 
 
 class TrainingSessionDB(Base):

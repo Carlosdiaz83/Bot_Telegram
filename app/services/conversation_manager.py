@@ -52,6 +52,7 @@ from app.services.closing_strategy import (
     recuperar_indeciso,
 )
 from app.services.knowledge_service import KnowledgeService
+from app.services.knowledge_engine import KnowledgeEngine
 from app.services.lead_scoring import LeadScoringService
 from app.ai.service import AIService
 from app.database.database import get_engine, get_session_factory, crear_tablas
@@ -84,9 +85,12 @@ class ConversationManager:
             engine = get_engine(database_url)
             crear_tablas(engine)
             self._db_factory = get_session_factory(engine)
-            logger.info("[DATABASE] ConversationManager con DB habilitada")
+            # KnowledgeEngine usa la DB para retrieval de conocimiento
+            self._knowledge_engine = KnowledgeEngine(self._db_factory())
+            logger.info("[DATABASE] ConversationManager con DB habilitada + KnowledgeEngine")
         else:
             self._db_factory = None
+            self._knowledge_engine = None
             logger.info("[DATABASE] ConversationManager sin DB (solo memoria)")
 
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
@@ -499,17 +503,23 @@ class ConversationManager:
         """
         Obtiene información de knowledge relevante para el Lead y etapa.
 
-        Combina conocimiento profundo (contexto_para_lead) con
-        conocimiento específico de la etapa.
+        Prioriza KnowledgeEngine (DB) cuando está disponible.
+        Fallback a KnowledgeService (archivos markdown).
         """
         partes: list[str] = []
 
-        # Conocimiento profundo basado en Lead
+        # ── Prioridad 1: KnowledgeEngine (DB) ──
+        if self._knowledge_engine is not None:
+            contexto_db = self._knowledge_engine.contexto_para_lead(lead, etapa.value, mensaje)
+            if contexto_db:
+                partes.append(contexto_db)
+
+        # ── Prioridad 2: KnowledgeService (archivos markdown) — fallback o complemento ──
         contexto_lead = self.knowledge.contexto_para_lead(lead, etapa.value, mensaje)
         if contexto_lead:
             partes.append(contexto_lead)
 
-        # Conocimiento específico de etapa (fallback)
+        # Conocimiento específico de etapa (complemento)
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
             if lead.prioridad_cliente == PrioridadCliente.ECONOMICO:
                 perfil = self.knowledge.obtener_argumento_perfil("económico")

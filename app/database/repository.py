@@ -1,13 +1,19 @@
 """
-Repositorios de persistencia para Leads, Conversaciones y Entrenamientos.
+Repositorios de persistencia para Leads, Conversaciones, Entrenamientos
+y Base de Conocimiento SERVIRED.
 
 Proporciona acceso a la base de datos siguiendo el patrón Repository.
 Preparado para cambiar de SQLite a PostgreSQL modificando solo la URL.
 
 Uso:
-    from app.database.repository import LeadRepository, ConversationRepository, TrainingRepository
+    from app.database.repository import (
+        LeadRepository, ConversationRepository,
+        TrainingRepository, KnowledgeRepository,
+    )
     lead_repo = LeadRepository(db)
     lead = lead_repo.buscar_por_telegram_id(123456)
+    kb_repo = KnowledgeRepository(db)
+    doc = kb_repo.buscar_documento_por_categoria("planes")
 """
 
 from __future__ import annotations
@@ -412,3 +418,185 @@ class TrainingRepository:
                 pass
 
         return contador.most_common()
+
+
+class KnowledgeRepository:
+    """
+    Repositorio de persistencia del conocimiento SERVIRED.
+
+    Maneja CRUD de la tabla unificada ServiredKnowledgeDB:
+    planes, coberturas, beneficios, objeciones, cierres, etc.
+    """
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    # ─────────────────────────────────────────
+    # CRUD
+    # ─────────────────────────────────────────
+
+    def crear(
+        self,
+        titulo: str,
+        categoria: str,
+        contenido: str,
+        tags: str = "",
+        fuente: str = "",
+        prioridad_comercial: int = 0,
+    ):
+        """
+        Crea un registro de conocimiento.
+
+        Args:
+            titulo: Nombre del registro.
+            categoria: planes|precios|coberturas|beneficios|objeciones|cierres|argumentos|informacion.
+            contenido: Texto completo.
+            tags: CSV de tags para búsqueda.
+            fuente: Archivo original o URL.
+            prioridad_comercial: Prioridad (mayor = más relevante).
+
+        Returns:
+            ServiredKnowledgeDB creado.
+        """
+        from app.database.models import ServiredKnowledgeDB
+
+        item = ServiredKnowledgeDB(
+            titulo=titulo,
+            categoria=categoria,
+            contenido=contenido,
+            tags=tags,
+            fuente=fuente,
+            prioridad_comercial=prioridad_comercial,
+        )
+        self._db.add(item)
+        self._db.commit()
+        self._db.refresh(item)
+        return item
+
+    def buscar_por_id(self, item_id: int):
+        """Busca un registro por ID."""
+        from app.database.models import ServiredKnowledgeDB
+        stmt = select(ServiredKnowledgeDB).where(ServiredKnowledgeDB.id == item_id)
+        result = self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def buscar_por_categoria(self, categoria: str) -> list:
+        """Busca registros activos por categoría, ordenados por prioridad descendente."""
+        from app.database.models import ServiredKnowledgeDB
+        stmt = (
+            select(ServiredKnowledgeDB)
+            .where(
+                ServiredKnowledgeDB.categoria == categoria,
+                ServiredKnowledgeDB.activo == True,  # noqa: E712
+            )
+            .order_by(ServiredKnowledgeDB.prioridad_comercial.desc())
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def buscar_por_tags(self, tags_buscados: list[str], limite: int = 10) -> list:
+        """Busca registros cuyos tags contengan alguna de las palabras buscadas."""
+        from app.database.models import ServiredKnowledgeDB
+        from sqlalchemy import or_
+        if not tags_buscados:
+            return []
+        condiciones = [
+            ServiredKnowledgeDB.tags.ilike(f"%{tag}%")
+            for tag in tags_buscados
+        ]
+        stmt = (
+            select(ServiredKnowledgeDB)
+            .where(or_(*condiciones))
+            .where(ServiredKnowledgeDB.activo == True)  # noqa: E712
+            .order_by(ServiredKnowledgeDB.prioridad_comercial.desc())
+            .limit(limite)
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def buscar_por_texto(self, texto: str, limite: int = 10) -> list:
+        """Busca registros cuyo contenido contenga el texto dado."""
+        from app.database.models import ServiredKnowledgeDB
+        stmt = (
+            select(ServiredKnowledgeDB)
+            .where(
+                ServiredKnowledgeDB.contenido.ilike(f"%{texto}%"),
+                ServiredKnowledgeDB.activo == True,  # noqa: E712
+            )
+            .order_by(ServiredKnowledgeDB.prioridad_comercial.desc())
+            .limit(limite)
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def activos(self) -> list:
+        """Retorna todos los registros activos."""
+        from app.database.models import ServiredKnowledgeDB
+        stmt = (
+            select(ServiredKnowledgeDB)
+            .where(ServiredKnowledgeDB.activo == True)  # noqa: E712
+            .order_by(
+                ServiredKnowledgeDB.categoria,
+                ServiredKnowledgeDB.prioridad_comercial.desc(),
+            )
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def desactivar(self, item_id: int) -> bool:
+        """Desactiva un registro (soft delete)."""
+        item = self.buscar_por_id(item_id)
+        if item is None:
+            return False
+        item.activo = False
+        self._db.commit()
+        return True
+
+    def eliminar(self, item_id: int) -> bool:
+        """Elimina un registro permanentemente."""
+        item = self.buscar_por_id(item_id)
+        if item is None:
+            return False
+        self._db.delete(item)
+        self._db.commit()
+        return True
+
+    # ─────────────────────────────────────────
+    # Contexto para IA
+    # ─────────────────────────────────────────
+
+    def contexto_para_lead(self, perfil: str = "", necesidad: str = "", mensaje: str = "") -> str:
+        """
+        Genera contexto de conocimiento para un Lead.
+
+        Busca por categoría y por tags relevantes del mensaje.
+        """
+        partes: list[str] = []
+
+        # 1. Planes
+        planes = self.buscar_por_categoria("planes")
+        for item in planes:
+            partes.append(item.contenido[:300])
+
+        # 2. Coberturas
+        coberturas = self.buscar_por_categoria("coberturas")
+        for item in coberturas:
+            partes.append(item.contenido[:300])
+
+        # 3. Beneficios
+        beneficios = self.buscar_por_categoria("beneficios")
+        for item in beneficios[:3]:
+            partes.append(item.contenido[:200])
+
+        # 4. Búsqueda por tags del mensaje
+        if mensaje:
+            palabras = mensaje.lower().split()
+            tags_relevantes = [p for p in palabras if len(p) > 3]
+            if tags_relevantes:
+                por_tags = self.buscar_por_tags(tags_relevantes[:5], limite=5)
+                for item in por_tags:
+                    # Evitar duplicados
+                    if item.contenido[:100] not in "\n".join(partes):
+                        partes.append(item.contenido[:200])
+
+        return "\n\n".join(partes) if partes else ""
