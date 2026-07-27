@@ -83,9 +83,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         manager = get_manager()
 
-        logger.info("[CONVERSATION] Procesando mensaje de user=%s (id=%d)", nombre, telegram_id)
+        logger.info("[FLOW] HANDLER_ENTER — user=%s (id=%d), mensaje='%s'", nombre, telegram_id, mensaje[:80])
         respuesta = manager.procesar_mensaje(telegram_id, mensaje)
-        logger.info("[CONVERSATION] Respuesta generada (%d chars)", len(respuesta))
+        logger.info("[FLOW] HANDLER_EXIT — user=%s (id=%d), respuesta='%s'", nombre, telegram_id, respuesta[:80])
 
         await update.message.reply_text(respuesta)
         logger.info("[TELEGRAM] Respuesta enviada a %s (id=%d)", nombre, telegram_id)

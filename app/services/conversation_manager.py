@@ -143,10 +143,13 @@ class ConversationManager:
         estado_nuevo = session.etapa.value
 
         logger.info(
-            "[CONVERSATION] telegram_user_id=%s, estado_anterior=%s, "
-            "mensaje_usuario=%s, estado_nuevo=%s",
-            telegram_id, estado_anterior,
-            mensaje[:60], estado_nuevo,
+            "[FLOW] user=%s, mensaje='%s', handler=%s, "
+            "etapa_antes=%s, etapa_despues=%s, intent=%s, "
+            "returning=%s, respuesta_generada=%s",
+            telegram_id, mensaje[:80], session._handler_ejecutado,
+            estado_anterior, estado_nuevo,
+            session.lead.interes_detectado.value if session.lead.interes_detectado else None,
+            es_usuario_returning, respuesta[:80],
         )
 
         lead.score, lead.temperatura_lead = self.scoring.calcular_y_clasificar(lead)
@@ -182,52 +185,68 @@ class ConversationManager:
 
         if etapa == EtapaConversacion.NUEVO:
             if es_returning:
+                session._handler_ejecutado = "_handle_returning"
                 return self._handle_returning(session, mensaje)
+            session._handler_ejecutado = "_handle_nuevo"
             return self._handle_nuevo(session, mensaje)
 
         if etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
+            session._handler_ejecutado = "_handle_descubrimiento"
             return self._wrap_ia(
                 self._handle_descubrimiento(session, mensaje),
                 session, mensaje,
             )
 
         if etapa == EtapaConversacion.CALIFICANDO:
+            session._handler_ejecutado = "_handle_calificacion"
             return self._wrap_ia(
                 self._handle_calificacion(session, mensaje),
                 session, mensaje,
             )
 
         if etapa == EtapaConversacion.ESPERANDO_DATOS:
+            session._handler_ejecutado = "_handle_esperando_datos"
             return self._wrap_ia(
                 self._handle_esperando_datos(session, mensaje),
                 session, mensaje,
             )
 
         if etapa == EtapaConversacion.COTIZANDO:
+            session._handler_ejecutado = "_handle_cotizando"
             return self._wrap_ia(
                 self._handle_cotizando(session, mensaje),
                 session, mensaje,
             )
 
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
+            session._handler_ejecutado = "_handle_valor"
             return self._wrap_ia(
                 self._handle_valor(session, mensaje),
                 session, mensaje,
             )
 
         if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
+            session._handler_ejecutado = "_handle_objeciones"
             return self._wrap_ia(
                 self._handle_objeciones(session, mensaje),
                 session, mensaje,
             )
 
         if etapa == EtapaConversacion.INTENTANDO_CIERRE:
+            session._handler_ejecutado = "_handle_cierre"
             return self._wrap_ia(
                 self._handle_cierre(session, mensaje),
                 session, mensaje,
             )
 
         # Etapas finales (CALIFICADO, DERIVADO) — no son dead-end
+        logger.warning(
+            "[FLOW] SIN_HANDLER — user=%s, etapa=%s, returning=%s, "
+            "nombre=%s → cayendo en fallback",
+            session.telegram_id, session.etapa.value, es_returning,
+            session.lead.nombre,
+        )
+        session._handler_ejecutado = "FALLBACK"
         nombre = session.lead.nombre or ""
         if es_returning:
             return (
@@ -910,11 +929,25 @@ class ConversationManager:
                     session.lead = lead_domain
                     if lead_db.etapa_conversacion:
                         try:
-                            session.etapa = EtapaConversacion(
+                            etapa_db = EtapaConversacion(
                                 lead_db.etapa_conversacion
                             )
+                            logger.warning(
+                                "[FLOW] DB_LOAD — user=%s, etapa_db='%s', "
+                                "nombre='%s', estado='%s', "
+                                "SOBREESCRIBE session.etapa anterior='%s'",
+                                telegram_id, lead_db.etapa_conversacion,
+                                lead_domain.nombre,
+                                lead_domain.estado_comercial.value,
+                                session.etapa.value,
+                            )
+                            session.etapa = etapa_db
                         except ValueError:
-                            pass
+                            logger.error(
+                                "[FLOW] DB_LOAD — user=%s, etapa_db='%s' "
+                                "NO ES VALIDA en EtapaConversacion",
+                                telegram_id, lead_db.etapa_conversacion,
+                            )
                     logger.info(
                         "[DATABASE] Lead cargado — id=%s, nombre=%s, etapa=%s, estado=%s",
                         telegram_id, lead_domain.nombre,

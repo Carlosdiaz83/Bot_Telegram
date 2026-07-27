@@ -73,6 +73,7 @@ class UserSession:
         self.mensajes_en_etapa: int = 0
         self.en_cotizacion: bool = False
         self.datos_cotizacion: dict = {}
+        self._handler_ejecutado: str = "none"
 
     def actualizar_interaccion(self) -> None:
         """Registra la hora de la última interacción."""
