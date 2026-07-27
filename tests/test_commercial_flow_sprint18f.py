@@ -358,7 +358,7 @@ class TestValorSinPasivo:
         respuesta = manager._handle_valor(session, "bien")
         assert "avanzamos" in respuesta.lower() or "afiliación" in respuesta.lower()
 
-    def test_valor_fuerza_cierre_despues_de_3_mensajes(self, manager):
+    def test_valor_responde_con_beneficios(self, manager):
         session = manager.session_manager.get_or_create(9031)
         session.lead.nombre = "Test"
         session.lead.interes_detectado = InteresDetectado.PRECIOS
@@ -366,4 +366,5 @@ class TestValorSinPasivo:
         session.mensajes_en_etapa = 3
 
         respuesta = manager._handle_valor(session, "genial")
-        assert session.etapa == EtapaConversacion.INTENTANDO_CIERRE
+        assert session.etapa == EtapaConversacion.PRESENTANDO_VALOR
+        assert len(respuesta) > 10

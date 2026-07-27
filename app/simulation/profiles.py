@@ -199,7 +199,7 @@ PERFILES_CLIENTES: dict[str, ClienteProfile] = {
         mensajes=[
             "Hola, quiero afiliarme",
             "Me llamo María",
-            "Soy monotributista",
+            "Soy monotributista categoría B",
             "Tengo esposo y 2 hijos",
             "33 años",
             "De Santa Fe",

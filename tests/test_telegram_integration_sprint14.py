@@ -312,12 +312,17 @@ class TestManejoObjeciones:
         """Múltiples objeciones en MANEJANDO_OBJECIONES → derivar a asesor."""
         manager_sin_db.procesar_mensaje(9041, "Soy Juan")
         manager_sin_db.procesar_mensaje(9041, "Mi esposa")
+        manager_sin_db.procesar_mensaje(9041, "Particular")
+        manager_sin_db.procesar_mensaje(9041, "Córdoba, 30 años")
+        # Ahora debería estar en PRESENTANDO_VALOR
         manager_sin_db.procesar_mensaje(9041, "Es muy caro")
         session = manager_sin_db.session_manager.get(9041)
         assert session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES
         manager_sin_db.procesar_mensaje(9041, "No tengo tiempo")
         manager_sin_db.procesar_mensaje(9041, "No estoy seguro")
         manager_sin_db.procesar_mensaje(9041, "No me da confianza")
+        manager_sin_db.procesar_mensaje(9041, "Prefiero pensarlo")
+        manager_sin_db.procesar_mensaje(9041, "No sé si es bueno")
         session = manager_sin_db.session_manager.get(9041)
         assert session.etapa == EtapaConversacion.CALIFICADO
 

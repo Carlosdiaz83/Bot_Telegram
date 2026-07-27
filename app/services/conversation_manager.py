@@ -197,6 +197,18 @@ class ConversationManager:
                 session, mensaje,
             )
 
+        if etapa == EtapaConversacion.ESPERANDO_DATOS:
+            return self._wrap_ia(
+                self._handle_esperando_datos(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.COTIZANDO:
+            return self._wrap_ia(
+                self._handle_cotizando(session, mensaje),
+                session, mensaje,
+            )
+
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
             return self._wrap_ia(
                 self._handle_valor(session, mensaje),
@@ -215,11 +227,15 @@ class ConversationManager:
                 session, mensaje,
             )
 
-        # Etapas finales (CALIFICADO, DERIVADO)
+        # Etapas finales (CALIFICADO, DERIVADO) — no son dead-end
         nombre = session.lead.nombre or ""
+        if es_returning:
+            return (
+                f"¡Hola {nombre}! ¿En qué puedo ayudarte? "
+                "Puedo darte información sobre nuestros planes o continuar con tu trámite."
+            )
         return (
-            f"Gracias {nombre} por tu consulta. "
-            "Un asesor se comunicará pronto con vos. 😊"
+            f"¡Hola {nombre}! ¿En qué puedo ayudarte?"
         )
 
     # ─────────────────────────────────────────
@@ -244,7 +260,7 @@ class ConversationManager:
             if tiene_intencion_comercial:
                 logger.info(
                     "[SALES] Intención comercial detectada en NUEVO — user=%s, "
-                    "intención=%s, saltando a recolección agresiva",
+                    "intención=%s, saltando a CALIFICANDO",
                     session.telegram_id, intencion.value,
                 )
                 lead.estado_comercial = EstadoComercial.CALIFICANDO
@@ -281,7 +297,7 @@ class ConversationManager:
                 "cómo te llamás?"
             )
 
-        # Sin nombre y sin intención → quedarse en NUEVO y pedir nombre
+        # Sin nombre y sin intención comercial → quedarse en NUEVO y pedir nombre
         logger.debug("[LEAD] Esperando nombre de user=%s", session.telegram_id)
         return (
             "¡Hola! Soy Sofía 😊, asesora de Servired. "
@@ -318,6 +334,18 @@ class ConversationManager:
                 session, mensaje,
             )
 
+        if etapa == EtapaConversacion.ESPERANDO_DATOS:
+            return self._wrap_ia(
+                self._handle_esperando_datos(session, mensaje),
+                session, mensaje,
+            )
+
+        if etapa == EtapaConversacion.COTIZANDO:
+            return self._wrap_ia(
+                self._handle_cotizando(session, mensaje),
+                session, mensaje,
+            )
+
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
             return self._wrap_ia(
                 self._handle_valor(session, mensaje),
@@ -342,7 +370,7 @@ class ConversationManager:
         )
 
     def _handle_descubrimiento(self, session: UserSession, mensaje: str) -> str:
-        """Maneja la etapa de descubrimiento de necesidad."""
+        """Maneja la etapa de descubrimiento de necesidad — sin intención comercial."""
         lead = session.lead
 
         if lead.nombre is None:
@@ -369,7 +397,6 @@ class ConversationManager:
         if tipo:
             lead.tipo_afiliacion = tipo
 
-        # Si ya tiene intención comercial, hacer recolección agresiva
         tiene_intencion = (
             lead.interes_detectado is not None
             and lead.interes_detectado != InteresDetectado.INFORMACION_GENERAL
@@ -393,10 +420,10 @@ class ConversationManager:
                     "Así te preparo la mejor propuesta."
                 )
 
-            if self._lead_listo_para_valor(lead):
-                lead.estado_comercial = EstadoComercial.INTERESADO
-                session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
-                return generar_argumento(lead)
+        # Si detectó tipo_afiliacion → saltar a ESPERANDO_DATOS
+        if tipo:
+            session.avanzar_etapa(EtapaConversacion.ESPERANDO_DATOS)
+            return self._handle_esperando_datos(session, mensaje)
 
         session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
 
@@ -406,7 +433,7 @@ class ConversationManager:
         )
 
     def _handle_calificacion(self, session: UserSession, mensaje: str) -> str:
-        """Maneja la etapa de calificación."""
+        """Maneja la etapa de calificación — recolecta tipo afiliación y grupo familiar."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.CALIFICANDO
 
@@ -419,40 +446,25 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
-        # Detectar si menciona recibo de sueldo
-        if self._detectar_recibo_sueldo(mensaje):
-            lead.tiene_recibo_sueldo = True
-            session.en_cotizacion = True
-            return (
-                f"¡Perfecto {lead.nombre or ''}! Para calcular tu cotización "
-                "necesito los conceptos de obra social de tu recibo de sueldo. "
-                "Por favor, indicame los montos que figuran como "
-                "'Obra Social', 'Aportes Obra Social' o similar."
+        # Si ya tiene tipo_afiliacion → ESPERANDO_DATOS para completar datos restantes
+        if lead.tipo_afiliacion is not None:
+            logger.info(
+                "[SALES] Tipo afiliación detectado en CALIFICANDO — user=%s, "
+                "tipo=%s, pasando a ESPERANDO_DATOS",
+                session.telegram_id, lead.tipo_afiliacion.value,
             )
-
-        # Si estamos en proceso de cotización, extraer conceptos
-        if getattr(session, 'en_cotizacion', False):
-            return self._handle_cotizacion(session, mensaje)
-
-        if self._lead_listo_para_valor(lead):
-            lead.estado_comercial = EstadoComercial.INTERESADO
-            session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
-            return generar_argumento(lead)
+            session.avanzar_etapa(EtapaConversacion.ESPERANDO_DATOS)
+            return self._handle_esperando_datos(session, mensaje)
 
         if resultado.proxima_pregunta:
             return self._generar_siguiente_pregunta(lead, resultado.proxima_pregunta)
 
-        if session.mensajes_en_etapa > 6:
-            lead.estado_comercial = EstadoComercial.INTERESADO
-            session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
-            return generar_argumento(lead)
-
         return self._generar_siguiente_pregunta(
-            lead, resultado.proxima_pregunta or "nombre"
+            lead, resultado.proxima_pregunta or "tipo_afiliacion"
         )
 
     def _handle_valor(self, session: UserSession, mensaje: str) -> str:
-        """Maneja la etapa de generación de valor."""
+        """Maneja la etapa de generación de valor — presenta propuesta y busca cierre."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.INTERESADO
 
@@ -462,6 +474,7 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
+        # Cliente dice "sí/dale/ok" → intentar cierre
         if any(p in mensaje.lower() for p in [
             "sí", "si", "dale", "avanzamos", "ok", "quiero",
         ]):
@@ -471,14 +484,7 @@ class ConversationManager:
             session.intento_de_cierre = True
             return cierre.respuesta
 
-        session.mensajes_en_etapa += 1
-        if session.mensajes_en_etapa >= 3:
-            lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
-            session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
-            cierre = intentar_cierre(lead)
-            session.intento_de_cierre = True
-            return cierre.respuesta
-
+        # Sin respuesta afirmativa → reforzar valor (sin force-advance)
         beneficios = self.knowledge.obtener_beneficios()
         if beneficios:
             return (
@@ -492,15 +498,28 @@ class ConversationManager:
         )
 
     def _handle_objeciones(self, session: UserSession, mensaje: str) -> str:
-        """Maneja la etapa de objeciones."""
+        """Maneja la etapa de objeciones — resuelve dudas o deriva si es necesario."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.OBJECION
+
+        # Detectar si pide asesor explícitamente
+        texto_lower = mensaje.lower()
+        if any(p in texto_lower for p in [
+            "asesor", "hablar con alguien", "persona", "llamada",
+            "teléfono", "contacto",
+        ]):
+            lead.estado_comercial = EstadoComercial.DERIVADO
+            session.avanzar_etapa(EtapaConversacion.DERIVADO)
+            return (
+                f"¡Perfecto {lead.nombre or ''}! Un asesor se comunicará con vos pronto. "
+                "¿Dejame tu número de teléfono y coordinamos una llamada?"
+            )
 
         objecion = analizar_mensaje(mensaje, lead)
 
         if objecion.es_objecion:
             session.mensajes_en_etapa += 1
-            if session.mensajes_en_etapa >= 3:
+            if session.mensajes_en_etapa >= 5:
                 lead.estado_comercial = EstadoComercial.SEGUIMIENTO
                 session.avanzar_etapa(EtapaConversacion.CALIFICADO)
                 return (
@@ -513,6 +532,7 @@ class ConversationManager:
                 return f"{objecion.respuesta} {respuesta_knowledge}"
             return objecion.respuesta or ""
 
+        # No es objeción → volver a intentar cierre
         lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
         session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
         cierre = intentar_cierre(lead)
@@ -520,7 +540,7 @@ class ConversationManager:
         return cierre.respuesta
 
     def _handle_cierre(self, session: UserSession, mensaje: str) -> str:
-        """Maneja la etapa de cierre."""
+        """Maneja la etapa de cierre — interpreta respuesta del cliente."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
         resultado = interpretar_respuesta_cierre(mensaje)
@@ -545,20 +565,144 @@ class ConversationManager:
             )
 
         session.mensajes_en_etapa += 1
-        if session.mensajes_en_etapa >= 2:
-                lead.estado_comercial = EstadoComercial.SEGUIMIENTO
-                session.avanzar_etapa(EtapaConversacion.CALIFICADO)
-                return (
-                    f"{lead.nombre or 'Hola'}, entiendo que necesitás tiempo. "
-                    "Un asesor puede contactarte cuando estés listo. "
-                    "Dejame tu número y te contactamos."
-                )
+        if session.mensajes_en_etapa >= 4:
+            lead.estado_comercial = EstadoComercial.SEGUIMIENTO
+            session.avanzar_etapa(EtapaConversacion.CALIFICADO)
+            return (
+                f"{lead.nombre or 'Hola'}, entiendo que necesitás tiempo. "
+                "Un asesor puede contactarte cuando estés listo. "
+                "Dejame tu número y te contactamos."
+            )
 
         return recuperar_indeciso(lead)
 
     # ─────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────
+
+    def _datos_faltantes_para_cotizar(self, lead: Lead) -> list[str]:
+        """Lista los datos que faltan para poder cotizar."""
+        faltantes: list[str] = []
+
+        if lead.localidad is None:
+            faltantes.append("de qué localidad sos")
+
+        if lead.tipo_afiliacion == TipoAfiliacion.PARTICULAR:
+            if lead.edad is None:
+                faltantes.append("cuántos años tenés")
+
+        if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
+            if lead.categoria_monotributo is None:
+                faltantes.append("en qué categoría de monotributo estás")
+
+        if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
+            if not lead.tiene_recibo_sueldo:
+                faltantes.append("si tenés el recibo de sueldo a mano")
+
+        return faltantes
+
+    def _handle_esperando_datos(self, session: UserSession, mensaje: str) -> str:
+        """Recolecta datos restantes para cotizar: localidad, edad/categoría/recibo."""
+        lead = session.lead
+        lead.estado_comercial = EstadoComercial.CALIFICANDO
+
+        # Extraer datos del mensaje
+        from app.services.lead_qualifier import (
+            _detectar_grupo_familiar,
+            _extraer_edad,
+            _extraer_localidad,
+        )
+
+        if lead.localidad is None:
+            localidad = _extraer_localidad(mensaje)
+            if localidad:
+                lead.localidad = localidad
+
+        if lead.edad is None:
+            edad = _extraer_edad(mensaje)
+            if edad:
+                lead.edad = edad
+
+        # Detectar grupo familiar si aún no está completo
+        if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
+            gf = _detectar_grupo_familiar(mensaje)
+            if gf:
+                lead.actualizar_grupo_familiar(
+                    conyuge=gf["conyuge"],
+                    hijos=gf["hijos"],
+                    cantidad_hijos=gf["cantidad_hijos"],
+                )
+
+        # Detectar categoría de monotributo si aplica
+        if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO and lead.categoria_monotributo is None:
+            import re
+            match = re.search(r"categor[íi]a\s+([A-Ha-h])", mensaje, re.IGNORECASE)
+            if match:
+                lead.categoria_monotributo = match.group(1).upper()
+
+        # Detectar recibo de sueldo si aplica
+        if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
+            if self._detectar_recibo_sueldo(mensaje):
+                lead.tiene_recibo_sueldo = True
+
+        # Verificar si falta algo
+        faltantes = self._datos_faltantes_para_cotizar(lead)
+
+        if not faltantes:
+            # Tiene todo → cotizar
+            session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+            return self._handle_cotizando(session, mensaje)
+
+        # Preguntar lo que falta (combinar hasta 2)
+        session.mensajes_en_etapa += 1
+        if len(faltantes) >= 2:
+            return (
+                f"Necesito saber: {faltantes[0]} y {faltantes[1]}. "
+                "Así te preparo la mejor propuesta."
+            )
+        return f"¿{faltantes[0].capitalize()}?"
+
+    def _handle_cotizando(self, session: UserSession, mensaje: str) -> str:
+        """Genera la cotización y la presenta al cliente."""
+        lead = session.lead
+        lead.estado_comercial = EstadoComercial.INTERESADO
+
+        zona = "cordoba"
+        if lead.localidad and "cordoba" not in lead.localidad.lower():
+            zona = "interior"
+
+        nombre_plan = "medimax"
+        if lead.prioridad_cliente and lead.prioridad_cliente.value == "completo":
+            nombre_plan = "medimax gold"
+        elif lead.prioridad_cliente and lead.prioridad_cliente.value == "economico":
+            nombre_plan = "medimax co"
+
+        if self._calculator is None:
+            session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
+            nombre = lead.nombre or ""
+            return (
+                f"¡Perfecto {nombre}! Con los datos que me diste puedo "
+                "prepararte una propuesta. Te cuento que tenemos planes "
+                "que incluyen consultas, estudios, odontología y más. "
+                "¿Querés que te cuente los detalles?"
+            )
+
+        resultado = self._calculator.cotizar(
+            lead=lead,
+            zona=zona,
+            nombre_plan=nombre_plan,
+        )
+
+        propuesta = self._calculator.generar_propuesta_texto(resultado)
+
+        session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
+
+        logger.info(
+            "[CONVERSATION] Cotización generada — user=%s, plan=%s, a_pagar=%.2f",
+            session.telegram_id, resultado.plan, resultado.valor_a_pagar,
+        )
+
+        return propuesta
 
     def _detectar_recibo_sueldo(self, mensaje: str) -> bool:
         """Detecta si el mensaje menciona recibo de sueldo."""
@@ -610,81 +754,15 @@ class ConversationManager:
         )
         return montos
 
-    def _handle_cotizacion(self, session: UserSession, mensaje: str) -> str:
-        """Maneja el proceso de cotización cuando el cliente tiene recibo."""
-        lead = session.lead
-        conceptos = self._extraer_conceptos_obra_social(mensaje)
-
-        if not conceptos:
-            return (
-                "No pude identificar los montos en tu mensaje. "
-                "Por favor, indicame los valores de los conceptos de obra social "
-                "de tu recibo de sueldo. Por ejemplo: '$15000, $5000'"
-            )
-
-        # Determinar zona
-        zona = "cordoba"
-        if lead.localidad:
-            localidad_lower = lead.localidad.lower()
-            if "cordoba" not in localidad_lower:
-                zona = "interior"
-
-        # Determinar plan sugerido según perfil
-        nombre_plan = "medimax"
-        if lead.prioridad_cliente and lead.prioridad_cliente.value == "completo":
-            nombre_plan = "medimax gold"
-        elif lead.prioridad_cliente and lead.prioridad_cliente.value == "economico":
-            nombre_plan = "medimax co"
-
-        # Calcular cotización
-        if self._calculator is None:
-            return (
-                "Para realizar la cotización necesito acceso a la base de datos. "
-                "Por favor, intentá más tarde o contactá a un asesor."
-            )
-
-        resultado = self._calculator.cotizar(
-            lead=lead,
-            conceptos_obra_social=conceptos,
-            zona=zona,
-            nombre_plan=nombre_plan,
-        )
-
-        # Generar propuesta
-        propuesta = self._calculator.generar_propuesta_texto(resultado)
-
-        # Avanzar etapa
-        session.en_cotizacion = False
-        lead.estado_comercial = EstadoComercial.INTERESADO
-        session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
-
-        logger.info(
-            "[CONVERSATION] Cotización generada — user=%s, plan=%s, a_pagar=%.2f",
-            session.telegram_id, resultado.plan, resultado.valor_a_pagar,
-        )
-
-        return propuesta
-
-    def _lead_listo_para_valor(self, lead: Lead) -> bool:
-        """Determina si el lead tiene suficiente información para generar valor."""
-        return (
-            lead.nombre is not None
-            and lead.tipo_afiliacion is not None
-            and (
-                lead.grupo_familiar.conyuge
-                or lead.grupo_familiar.hijos
-                or lead.cantidad_integrantes >= 1
-            )
-        )
-
     def _generar_siguiente_pregunta(self, lead: Lead, proxima_pregunta: str) -> str:
         """Genera el texto de la siguiente pregunta. Combina preguntas cuando es posible."""
-        # Si tenemos varios campos faltantes y el lead tiene intención, combinar
         faltantes = []
         if lead.tipo_afiliacion is None:
             faltantes.append("tu situación laboral (relación de dependencia, monotributo o particular)")
         if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
             faltantes.append("si la cobertura sería solo para vos o incluye familia")
+        if lead.localidad is None:
+            faltantes.append("de qué localidad sos")
         if lead.edad is None:
             faltantes.append("cuántos años tenés")
 

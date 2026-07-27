@@ -32,6 +32,8 @@ class EtapaConversacion(str, Enum):
     ESPERANDO_EDADES = "esperando_edades"
     DESCUBRIENDO_NECESIDAD = "descubriendo_necesidad"
     CALIFICANDO = "calificando"
+    ESPERANDO_DATOS = "esperando_datos"
+    COTIZANDO = "cotizando"
     PRESENTANDO_VALOR = "presentando_valor"
     MANEJANDO_OBJECIONES = "manejando_objeciones"
     INTENTANDO_CIERRE = "intentando_cierre"
@@ -70,6 +72,7 @@ class UserSession:
         self.resultado_cierre: ResultadoCierre | None = None
         self.mensajes_en_etapa: int = 0
         self.en_cotizacion: bool = False
+        self.datos_cotizacion: dict = {}
 
     def actualizar_interaccion(self) -> None:
         """Registra la hora de la última interacción."""

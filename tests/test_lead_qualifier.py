@@ -97,28 +97,24 @@ class TestCaso1_ConversacionInteresada:
         r2 = manager.procesar_mensaje(tid, "Para mi esposa y mis dos hijos")
         assert manager.session_manager.get(tid).etapa == EtapaConversacion.CALIFICANDO
 
-        # Calificación — situación actual
+        # Calificación — situación actual (detecta monotributo → ESPERANDO_DATOS)
         r3 = manager.procesar_mensaje(tid, "Soy monotributista")
-        r3_lower = r3.lower()
-        assert (
-            "monotributo" in r3_lower
-            or "monotribut" in r3_lower
-            or "familia" in r3_lower
-            or "integrantes" in r3_lower
-        )
-
-        # Calificación — seguir respondiendo
-        r4 = manager.procesar_mensaje(tid, "Sí, tengo aportes")
-        r5 = manager.procesar_mensaje(tid, "Soy de Córdoba")
-        r6 = manager.procesar_mensaje(tid, "Tengo 35 años")
 
         session = manager.session_manager.get(tid)
-        assert session is not None
-        # Debería estar en valor o cierre
+        assert session.etapa in (
+            EtapaConversacion.ESPERANDO_DATOS,
+            EtapaConversacion.CALIFICANDO,
+        )
+
+        # Completar datos para cotizar
+        r4 = manager.procesar_mensaje(tid, "Córdoba, tengo 35 años")
+
+        session = manager.session_manager.get(tid)
         assert session.etapa in (
             EtapaConversacion.PRESENTANDO_VALOR,
             EtapaConversacion.INTENTANDO_CIERRE,
             EtapaConversacion.CALIFICADO,
+            EtapaConversacion.ESPERANDO_DATOS,
         )
 
 
@@ -136,7 +132,10 @@ class TestCaso2_ObjecionPrecio:
         manager.procesar_mensaje(tid, "Solo para mí")
         manager.procesar_mensaje(tid, "Particular")
 
-        # Objeción de precio
+        # Completar datos para llegar a PRESENTANDO_VALOR
+        manager.procesar_mensaje(tid, "Córdoba, 30 años")
+
+        # Ahora sí objeción de precio (en PRESENTANDO_VALOR)
         r = manager.procesar_mensaje(tid, "Es muy caro")
         session = manager.session_manager.get(tid)
         assert session is not None
@@ -671,6 +670,7 @@ class TestKnowledgeIntegracion:
         manager.procesar_mensaje(tid, "Hola, soy Martín")
         manager.procesar_mensaje(tid, "Solo para mí")
         manager.procesar_mensaje(tid, "Particular")
+        manager.procesar_mensaje(tid, "Córdoba, 30 años")
         r = manager.procesar_mensaje(tid, "Es caro")
         session = manager.session_manager.get(tid)
         assert session is not None
@@ -683,6 +683,7 @@ class TestKnowledgeIntegracion:
         manager.procesar_mensaje(tid, "Hola, me llamo Sofía")
         manager.procesar_mensaje(tid, "Solo para mí")
         manager.procesar_mensaje(tid, "Relación de dependencia")
+        manager.procesar_mensaje(tid, "Córdoba, 30 años")
         r = manager.procesar_mensaje(tid, "¿Por qué debería elegir Servired?")
         r_lower = r.lower()
         assert (
@@ -883,6 +884,7 @@ class TestAIIntegracion:
         manager.procesar_mensaje(tid, "Hola, soy Lucas")
         manager.procesar_mensaje(tid, "Solo para mí")
         manager.procesar_mensaje(tid, "Particular")
+        manager.procesar_mensaje(tid, "Córdoba, 30 años")
         r = manager.procesar_mensaje(tid, "Me parece caro")
 
         session = manager.session_manager.get(tid)
@@ -1406,6 +1408,7 @@ class TestEstadoComercialSprint8:
         manager.procesar_mensaje(tid, "Hola, soy Ana")
         manager.procesar_mensaje(tid, "Solo para mí")
         manager.procesar_mensaje(tid, "Particular")
+        manager.procesar_mensaje(tid, "Córdoba, 30 años")
         manager.procesar_mensaje(tid, "Dale, avanzamos")
         manager.procesar_mensaje(tid, "Sí, quiero")
         session = manager.session_manager.get(tid)

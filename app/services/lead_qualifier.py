@@ -67,6 +67,7 @@ _INTENCION_PALABRAS: dict[InteresDetectado, list[str]] = {
     InteresDetectado.PRECIOS: [
         "cuánto", "cuanto", "precio", "precios", "costo", "costa", "vale",
         "valor", "platita", "plata", "dinero", "pagar",
+        "cotización", "cotizacion", "cotizar", "cuánto cuesta",
     ],
     InteresDetectado.BENEFICIOS: [
         "beneficio", "beneficios", "ventajas", "qué incluye", "que incluye",
@@ -86,10 +87,12 @@ _INTENCION_PALABRAS: dict[InteresDetectado, list[str]] = {
     InteresDetectado.AFILIACION: [
         "afiliarme", "afiliar", "afiliación", "afiliacion", "darme de alta",
         "querés afiliar", "busco obra social", "sin obra",
+        "info", "información", "saber", "conocer", "planes",
+        "cómo funciona", "como funciona", "me interesa",
+        "quiero", "necesito", "busco",
     ],
     InteresDetectado.INFORMACION_GENERAL: [
-        "información", "informacion", "saber", "conocer", "qué es",
-        "que es", "como funciona", "cómo funciona", "quería saber",
+        "quería saber",
     ],
 }
 
@@ -155,10 +158,10 @@ def _extraer_nombre(texto: str) -> str | None:
 
 
 def _extraer_edad(texto: str) -> int | None:
-    """Extrae edad del mensaje. Patrones: Tengo 30 años, 30 años."""
+    """Extrae edad del mensaje. Patrones: Tengo 30 años, 30 años, 30 anios."""
     patrones = [
-        r"(?:tengo|edad|años?)\s*(\d{1,3})",
-        r"(\d{1,3})\s*(?:años?)",
+        r"(?:tengo|edad|años?|anios?)\s*(\d{1,3})",
+        r"(\d{1,3})\s*(?:años?|anios?)",
     ]
     for patron in patrones:
         match = re.search(patron, texto, re.IGNORECASE)
@@ -170,7 +173,7 @@ def _extraer_edad(texto: str) -> int | None:
 
 
 def _extraer_localidad(texto: str) -> str | None:
-    """Extrae localidad. Patrones: Soy de X, Vivo en X."""
+    """Extrae localidad. Patrones: Soy de X, Vivo en X, o ciudad suelta."""
     patrones = [
         r"(?:soy de|vivo en|localidad|ciudad)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)",
     ]
@@ -178,6 +181,19 @@ def _extraer_localidad(texto: str) -> str | None:
         match = re.search(patron, texto, re.IGNORECASE)
         if match:
             return match.group(1).strip()
+
+    # Buscar ciudades conocidas como palabras sueltas
+    ciudades_conocidas = [
+        "Córdoba", "Cordoba", "Buenos Aires", "Santa Fe", "Mendoza",
+        "Tucumán", "Tucuman", "Salta", "Entre Ríos", "Entre Rios",
+        "Chaco", "Corrientes", "Misiones", "San Juan", "La Plata",
+        "Mar del Plata", "Rosario", "Villa María", "Villa Carlos Paz",
+    ]
+    texto_lower = texto.lower()
+    for ciudad in ciudades_conocidas:
+        if ciudad.lower() in texto_lower:
+            return ciudad
+
     return None
 
 
