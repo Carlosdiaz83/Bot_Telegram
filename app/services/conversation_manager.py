@@ -110,11 +110,21 @@ class ConversationManager:
         """
         session = self.session_manager.get_or_create(telegram_id)
 
+        lead_existente = False
         if self._db_enabled:
-            self._cargar_lead_desde_db(telegram_id, session)
+            lead_existente = self._cargar_lead_desde_db(telegram_id, session)
+
+        estado_anterior = session.etapa.value
 
         lead = session.lead
         es_usuario_returning = self._es_usuario_returning(session)
+
+        logger.info(
+            "[CONVERSATION] telegram_id=%s, lead_existente=%s, "
+            "nombre_actual=%s, etapa_actual=%s",
+            telegram_id, lead_existente,
+            lead.nombre, session.etapa.value,
+        )
 
         if es_usuario_returning:
             logger.info(
@@ -129,6 +139,15 @@ class ConversationManager:
         )
 
         respuesta = self._enrutar_mensaje(session, mensaje, es_usuario_returning)
+
+        estado_nuevo = session.etapa.value
+
+        logger.info(
+            "[CONVERSATION] telegram_user_id=%s, estado_anterior=%s, "
+            "mensaje_usuario=%s, estado_nuevo=%s",
+            telegram_id, estado_anterior,
+            mensaje[:60], estado_nuevo,
+        )
 
         lead.score, lead.temperatura_lead = self.scoring.calcular_y_clasificar(lead)
 
@@ -705,8 +724,8 @@ class ConversationManager:
     # DB helpers
     # ─────────────────────────────────────────
 
-    def _cargar_lead_desde_db(self, telegram_id: int, session: UserSession) -> None:
-        """Carga el lead persistido desde la DB si existe."""
+    def _cargar_lead_desde_db(self, telegram_id: int, session: UserSession) -> bool:
+        """Carga el lead persistido desde la DB si existe. Retorna True si encontró lead."""
         try:
             db = self._db_factory()
             try:
@@ -728,10 +747,13 @@ class ConversationManager:
                         session.etapa.value,
                         lead_domain.estado_comercial.value,
                     )
+                    return True
+                return False
             finally:
                 db.close()
         except Exception as e:
             logger.warning("[DATABASE] Error cargando lead: %s", e)
+            return False
 
     def _guardar_lead_en_db(
         self, telegram_id: int, lead: Lead, session: UserSession

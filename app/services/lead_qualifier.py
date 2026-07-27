@@ -119,7 +119,18 @@ def clasificar_intencion(texto: str) -> InteresDetectado:
 # ─────────────────────────────────────────────
 
 def _extraer_nombre(texto: str) -> str | None:
-    """Extrae nombre del mensaje. Patrones: Me llamo X, Soy X, Mi nombre es X."""
+    """Extrae nombre del mensaje. Patrones: Me llamo X, Soy X, Mi nombre es X, o nombre suelto."""
+    # Palabras comunes que NO son nombres
+    _NO_NOMBRES = {
+        "hola", "buenos", "buenas", "bien", "mal", "gracias", "che",
+        "quiero", "necesito", "busco", "puedo", "sí", "si", "no",
+        "dale", "ok", "genial", "perfecto", "excelente", "ayuda",
+        "info", "información", "precio", "precios", "plan", "planes",
+        "cobertura", "servired", "obra", "social", "monotributo",
+        "particular", "empresa", "familia", "hijos", "esposa",
+        "recibo", "sueldo", "aportes", "cuanto", "cuesta",
+    }
+
     patrones = [
         r"(?:me llamo|soy|mi nombre es|nombre)\s+([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)*)",
     ]
@@ -127,6 +138,19 @@ def _extraer_nombre(texto: str) -> str | None:
         match = re.search(patron, texto, re.IGNORECASE)
         if match:
             return match.group(1).strip()
+
+    # Nombre suelto: palabra única con mayúscula inicial (2+ chars)
+    palabras = texto.strip().split()
+    if len(palabras) == 1:
+        palabra = palabras[0]
+        if (
+            len(palabra) >= 3
+            and palabra[0].isupper()
+            and palabra.isalpha()
+            and palabra.lower() not in _NO_NOMBRES
+        ):
+            return palabra
+
     return None
 
 
