@@ -18,7 +18,7 @@ Uso:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from app.models.lead import (
     EstadoComercial,
@@ -96,6 +96,14 @@ class ConversationManager:
             self._knowledge_engine = None
             self._calculator = None
             logger.info("[DATABASE] ConversationManager sin DB (solo memoria)")
+
+        # Commercial AI Orchestrator — Sprint 20
+        from app.services.commercial_ai_orchestrator import CommercialAIOrchestrator
+        self._orchestrator = CommercialAIOrchestrator(
+            ai_service=ai_service,
+            knowledge_engine=self._knowledge_engine if self._db_enabled else None,
+            knowledge_service=self.knowledge,
+        )
 
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
@@ -180,9 +188,17 @@ class ConversationManager:
     def _enrutar_mensaje(
         self, session: UserSession, mensaje: str, es_returning: bool
     ) -> str:
-        """Enruta el mensaje al handler según la etapa actual."""
+        """
+        Enruta el mensaje: Orchestrator extrae datos, handler ejecuta lógica.
+
+        Flujo:
+            1. NUEVO → handler tradicional (saludo + nombre)
+            2. Etapas con handler → orchestrator analiza + handler ejecuta
+            3. Etapas sin handler → orchestrator responde (CALIFICADO, DERIVADO)
+        """
         etapa = session.etapa
 
+        # ── NUEVO: handler tradicional (saludo + extracción nombre) ──
         if etapa == EtapaConversacion.NUEVO:
             if es_returning:
                 session._handler_ejecutado = "_handle_returning"
@@ -190,6 +206,29 @@ class ConversationManager:
             session._handler_ejecutado = "_handle_nuevo"
             return self._handle_nuevo(session, mensaje)
 
+        # ── Orchestrator: pre-procesamiento (extraer datos + log) ──
+        historial = self._obtener_historial(session)
+        faltantes = self._datos_faltantes_para_cotizar(session.lead)
+
+        resultado = self._orchestrator.analizar(
+            lead=session.lead,
+            historial=historial,
+            mensaje=mensaje,
+            etapa=etapa,
+            datos_faltantes=faltantes,
+        )
+
+        logger.info(
+            "[ORCHESTRATOR] user=%s, etapa=%s → accion=%s, intencion=%s",
+            session.telegram_id, etapa.value,
+            resultado.accion, resultado.intencion[:50],
+        )
+
+        # Actualizar lead con datos detectados por el orchestrator
+        if resultado.datos_detectados:
+            self._actualizar_lead_con_datos(session.lead, resultado.datos_detectados)
+
+        # ── Handler tradicional para la etapa actual ──
         if etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
             session._handler_ejecutado = "_handle_descubrimiento"
             return self._wrap_ia(
@@ -239,22 +278,115 @@ class ConversationManager:
                 session, mensaje,
             )
 
-        # Etapas finales (CALIFICADO, DERIVADO) — no son dead-end
-        logger.warning(
-            "[FLOW] SIN_HANDLER — user=%s, etapa=%s, returning=%s, "
-            "nombre=%s → cayendo en fallback",
-            session.telegram_id, session.etapa.value, es_returning,
-            session.lead.nombre,
+        # ── Etapas sin handler (CALIFICADO, DERIVADO) → orchestrator response ──
+        logger.info(
+            "[ORCHESTRATOR] user=%s, etapa=%s → usando respuesta orchestrator",
+            session.telegram_id, session.etapa.value,
         )
-        session._handler_ejecutado = "FALLBACK"
-        nombre = session.lead.nombre or ""
-        if es_returning:
-            return (
-                f"¡Hola {nombre}! ¿En qué puedo ayudarte? "
-                "Puedo darte información sobre nuestros planes o continuar con tu trámite."
-            )
+        session._handler_ejecutado = "orchestrator_fallback"
+        return resultado.respuesta
+
+    # ─────────────────────────────────────────
+    # Helpers del Orchestrator
+    # ─────────────────────────────────────────
+
+    def _obtener_historial(self, session: UserSession) -> list[dict[str, str]]:
+        """Obtiene el historial de conversación desde la DB."""
+        if not self._db_enabled:
+            return []
+
+        try:
+            db = self._db_factory()
+            try:
+                conv_repo = ConversationRepository(db)
+                mensajes = conv_repo.historial_lead(
+                    session.lead.lead_id, limite=12
+                )
+                historial: list[dict[str, str]] = []
+                for msg in mensajes:
+                    historial.append({"role": "user", "content": msg.mensaje_usuario})
+                    historial.append({"role": "assistant", "content": msg.respuesta_sofia})
+                return historial
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug("[ORCHESTRATOR] Error obteniendo historial: %s", e)
+            return []
+
+    def _actualizar_lead_con_datos(
+        self, lead: Lead, datos: dict
+    ) -> None:
+        """Actualiza el Lead con los datos detectados por el Orchestrator."""
+        if "nombre" in datos and datos["nombre"] and not lead.nombre:
+            lead.nombre = datos["nombre"]
+
+        if "localidad" in datos and datos["localidad"] and not lead.localidad:
+            lead.localidad = datos["localidad"]
+
+        if "edad" in datos and datos["edad"] and lead.edad is None:
+            try:
+                lead.edad = int(datos["edad"])
+            except (ValueError, TypeError):
+                pass
+
+        if "tipo_afiliacion" in datos and datos["tipo_afiliacion"]:
+            try:
+                lead.tipo_afiliacion = TipoAfiliacion(datos["tipo_afiliacion"])
+            except ValueError:
+                pass
+
+        if "categoria_monotributo" in datos and datos["categoria_monotributo"]:
+            lead.categoria_monotributo = str(datos["categoria_monotributo"]).upper()
+
+        if "tiene_recibo_sueldo" in datos:
+            lead.tiene_recibo_sueldo = bool(datos["tiene_recibo_sueldo"])
+
+        if "grupo_familiar" in datos and isinstance(datos["grupo_familiar"], dict):
+            gf = datos["grupo_familiar"]
+            if gf.get("conyuge") or gf.get("hijos"):
+                lead.actualizar_grupo_familiar(
+                    conyuge=gf.get("conyuge", False),
+                    hijos=gf.get("hijos", False),
+                    cantidad_hijos=gf.get("cantidad_hijos", 0),
+                )
+
+    def _accion_objecion(
+        self, session: UserSession, resultado: Any, mensaje: str
+    ) -> str:
+        """Ejecuta la acción MANEJAR_OBJECION detectada por el Orchestrator."""
+        lead = session.lead
+        lead.estado_comercial = EstadoComercial.OBJECION
+        session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
+        session.mensajes_en_etapa += 1
+
+        texto_lower = mensaje.lower()
+        if any(p in texto_lower for p in [
+            "asesor", "hablar con alguien", "persona", "llamada",
+        ]):
+            return self._accion_derivar(session, resultado)
+
+        return resultado.respuesta
+
+    def _accion_cerrar(
+        self, session: UserSession, resultado: Any
+    ) -> str:
+        """Ejecuta la acción CERRAR detectada por el Orchestrator."""
+        lead = session.lead
+        lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
+        session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
+        session.mensajes_en_etapa += 1
+        return resultado.respuesta
+
+    def _accion_derivar(
+        self, session: UserSession, resultado: Any
+    ) -> str:
+        """Ejecuta la acción DERIVAR: transfiere a asesor humano."""
+        lead = session.lead
+        lead.estado_comercial = EstadoComercial.DERIVADO
+        session.avanzar_etapa(EtapaConversacion.DERIVADO)
         return (
-            f"¡Hola {nombre}! ¿En qué puedo ayudarte?"
+            f"¡Perfecto {lead.nombre or ''}! Un asesor se comunicará con vos pronto. "
+            "¿Dejame tu número de teléfono y coordinamos una llamada?"
         )
 
     # ─────────────────────────────────────────

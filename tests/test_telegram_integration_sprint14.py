@@ -75,6 +75,7 @@ def manager_con_db(db_session):
     """ConversationManager con DB real (mismo engine que db_session)."""
     from app.database.database import _engine, get_session_factory
     from app.services.conversation_manager import ConversationManager
+    from app.services.commercial_ai_orchestrator import CommercialAIOrchestrator
 
     engine = db_session.get_bind()
     manager = ConversationManager.__new__(ConversationManager)
@@ -85,6 +86,11 @@ def manager_con_db(db_session):
     manager.ai = None
     manager._db_enabled = True
     manager._db_factory = get_session_factory(engine)
+    manager._knowledge_engine = None
+    manager._calculator = None
+    manager._orchestrator = CommercialAIOrchestrator(
+        ai_service=None, knowledge_engine=None, knowledge_service=manager.knowledge,
+    )
     return manager
 
 
