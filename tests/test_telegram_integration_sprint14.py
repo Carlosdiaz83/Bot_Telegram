@@ -534,7 +534,7 @@ class TestLogsComerciales:
         assert "[LEAD]" in source
         assert "[CONVERSATION]" in source
         assert "[SALES]" in source
-        assert "[AI]" in source
+        assert "[AI]" in source or "[AI+DIRECTOR]" in source
         assert "[DATABASE]" in source
 
     def test_handlers_tiene_logs_telegram(self):

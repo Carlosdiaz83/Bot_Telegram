@@ -99,6 +99,7 @@ class CommercialPromptBuilder:
         knowledge: str = "",
         datos_faltantes: list[str] | None = None,
         context: Any = None,
+        objetivo: Any = None,
     ) -> list[dict[str, str]]:
         """
         Construye el prompt completo para el LLM.
@@ -111,14 +112,21 @@ class CommercialPromptBuilder:
             knowledge: Contexto recuperado del Knowledge Engine.
             datos_faltantes: Lista de datos que faltan para cotizar.
             context: CommercialConversationContext (memoria comercial).
+            objetivo: ObjetivoComercial del Director (Sprint 22).
 
         Returns:
             Lista de mensajes en formato OpenAI.
         """
         system_identity = self._build_identity_prompt()
-        system_context = self._build_context_prompt(
-            lead, historial, etapa, knowledge, datos_faltantes, context
-        )
+
+        if objetivo is not None:
+            system_context = self._build_objective_prompt(
+                lead, objetivo, knowledge, context
+            )
+        else:
+            system_context = self._build_context_prompt(
+                lead, historial, etapa, knowledge, datos_faltantes, context
+            )
 
         mensajes: list[dict[str, str]] = [
             {"role": "system", "content": system_identity},
@@ -207,6 +215,102 @@ Validá tu respuesta contra estos6 puntos:
 4. ¿Me estoy desviando del tema? → Si sí, regenerá
 5. ¿Estoy inventando información? → Si sí, regenerá
 6. ¿Esta respuesta acerca al cliente a la afiliación? → Si no, regenerá"""
+
+    def _build_objective_prompt(
+        self,
+        lead: Lead,
+        objetivo: Any,
+        knowledge: str = "",
+        context: Any = None,
+    ) -> str:
+        """
+        Construye el prompt con el objetivo obligatorio del Director.
+
+        Este prompt ES el que recibe el LLM. Contiene:
+        1. El objetivo que DEBE cumplir (no puede elegir otro)
+        2. Las prohibiciones (qué NO puede hacer)
+        3. Los datos del cliente
+        4. La memoria comercial
+        5. Conocimiento relevante
+
+        El LLM solo redacta. No decide estrategia.
+
+        Args:
+            lead: Lead con datos del cliente.
+            objetivo: ObjetivoComercial del Director.
+            knowledge: Conocimiento relevante de SERVIRED.
+            context: CommercialConversationContext.
+
+        Returns:
+            Prompt con objetivo obligatorio.
+        """
+        partes: list[str] = []
+
+        # ── OBJETIVO OBLIGATORIO (el LLM no puede cambiarlo) ──
+        partes.append("═══ OBJETIVO OBLIGATORIO DE ESTE MENSAJE ═══")
+        partes.append(f"Acción: {objetivo.accion}")
+
+        if objetivo.dato_requerido:
+            partes.append(f"Dato a pedir: {objetivo.dato_requerido}")
+
+        if objetivo.todos_faltantes:
+            partes.append(f"Todos los datos que faltan: {', '.join(objetivo.todos_faltantes)}")
+
+        if objetivo.proximo_si_responde:
+            partes.append(f"Después de obtener la respuesta: {objetivo.proximo_si_responde}")
+
+        partes.append(f"Por qué este objetivo: {objetivo.razon}")
+
+        # ── PROHIBICIONES (el LLM no puede violarlas) ──
+        if objetivo.prohibiciones:
+            partes.append("\n═══ PROHIBICIONES ESTRICTAS ═══")
+            partes.append("Está PROHIBIDO en este mensaje:")
+            for i, prohibicion in enumerate(objetivo.prohibiciones, 1):
+                partes.append(f"  {i}. {prohibicion}")
+
+        # ── DATOS DEL CLIENTE ──
+        partes.append("\n═══ DATOS DEL CLIENTE ═══")
+        partes.append(self._format_lead(lead))
+
+        # ── MEMORIA COMERCIAL ──
+        if context is not None:
+            partes.append(self._build_memory_section(context))
+
+        # ── CONOCIMIENTO SERVIRED (solo si es relevante) ──
+        if knowledge and objetivo.accion in ("COTIZAR", "PRESENTAR_VALOR", "REBATIR_OBJECION"):
+            partes.append("\n═══ CONOCIMIENTO SERVIRED ═══")
+            partes.append(knowledge[:2000])
+
+        # ── INSTRUCCIÓN FINAL ──
+        partes.append("\n═══ INSTRUCCIÓN ═══")
+        if objetivo.accion == "PEDIR_DATO":
+            partes.append(
+                "Redactá UNA sola respuesta que pida el dato requerido.\n"
+                "Máximo 4 oraciones. Voseo argentino.\n"
+                "NO agregues información adicional. SOLO pedí el dato."
+            )
+        elif objetivo.accion == "COTIZAR":
+            partes.append(
+                "Redactá la cotización o decí que vas a calcular.\n"
+                "Máximo 4 oraciones. Voseo argentino."
+            )
+        elif objetivo.accion == "REBATIR_OBJECION":
+            partes.append(
+                "Redactá una respuesta que resuelva la objeción del cliente.\n"
+                "Máximo 4 oraciones. Voseo argentino. Sé empática y directa."
+            )
+        elif objetivo.accion == "CERRAR":
+            partes.append(
+                "Redactá una respuesta que cierre la venta.\n"
+                "Máximo 4 oraciones. Voseo argentino. Segura y directa."
+            )
+        elif objetivo.accion == "PRESENTAR_VALOR":
+            partes.append(
+                "Redactá una respuesta que refuerce el valor de la propuesta.\n"
+                "Máximo 4 oraciones. Voseo argentino."
+            )
+
+        return "\n".join(partes)
 
     def _build_context_prompt(
         self,

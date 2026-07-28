@@ -105,6 +105,10 @@ class ConversationManager:
             knowledge_service=self.knowledge,
         )
 
+        # Commercial Director — Sprint 22
+        from app.services.commercial_director import CommercialDirector
+        self._director = CommercialDirector()
+
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
         Procesa un mensaje del usuario y devuelve la respuesta de Sofía.
@@ -233,49 +237,49 @@ class ConversationManager:
             session._handler_ejecutado = "_handle_descubrimiento"
             return self._wrap_ia(
                 self._handle_descubrimiento(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.CALIFICANDO:
             session._handler_ejecutado = "_handle_calificacion"
             return self._wrap_ia(
                 self._handle_calificacion(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.ESPERANDO_DATOS:
             session._handler_ejecutado = "_handle_esperando_datos"
             return self._wrap_ia(
                 self._handle_esperando_datos(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.COTIZANDO:
             session._handler_ejecutado = "_handle_cotizando"
             return self._wrap_ia(
                 self._handle_cotizando(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
             session._handler_ejecutado = "_handle_valor"
             return self._wrap_ia(
                 self._handle_valor(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
             session._handler_ejecutado = "_handle_objeciones"
             return self._wrap_ia(
                 self._handle_objeciones(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.INTENTANDO_CIERRE:
             session._handler_ejecutado = "_handle_cierre"
             return self._wrap_ia(
                 self._handle_cierre(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         # ── Etapas sin handler (CALIFICADO, DERIVADO) → orchestrator response ──
@@ -473,46 +477,56 @@ class ConversationManager:
         """Enruta directamente a la etapa sin detectar returning."""
         etapa = session.etapa
 
+        # Obtener interpretación del Orchestrator para el Director
+        historial = self._obtener_historial(session)
+        faltantes = self._datos_faltantes_para_cotizar(session.lead)
+        resultado = self._orchestrator.analizar(
+            lead=session.lead, historial=historial,
+            mensaje=mensaje, etapa=etapa, datos_faltantes=faltantes,
+        )
+        if resultado.datos_detectados:
+            self._actualizar_lead_con_datos(session.lead, resultado.datos_detectados)
+
         if etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
             return self._wrap_ia(
                 self._handle_descubrimiento(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.CALIFICANDO:
             return self._wrap_ia(
                 self._handle_calificacion(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.ESPERANDO_DATOS:
             return self._wrap_ia(
                 self._handle_esperando_datos(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.COTIZANDO:
             return self._wrap_ia(
                 self._handle_cotizando(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
             return self._wrap_ia(
                 self._handle_valor(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
             return self._wrap_ia(
                 self._handle_objeciones(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         if etapa == EtapaConversacion.INTENTANDO_CIERRE:
             return self._wrap_ia(
                 self._handle_cierre(session, mensaje),
-                session, mensaje,
+                session, mensaje, interpretacion=resultado,
             )
 
         return (
@@ -956,13 +970,18 @@ class ConversationManager:
     # IA helpers — AIService decide tono, empatía, persuasión
     # ─────────────────────────────────────────
 
-    def _wrap_ia(self, respuesta: str, session: UserSession, mensaje: str) -> str:
+    def _wrap_ia(
+        self, respuesta: str, session: UserSession, mensaje: str,
+        interpretacion: Any = None,
+    ) -> str:
         """Envuelve una respuesta lógica con generación IA si está disponible."""
         return self._mejorar_respuesta_con_ia(
             lead=session.lead,
             etapa=session.etapa,
             mensaje=mensaje,
             respuesta_logica=respuesta,
+            session=session,
+            interpretacion=interpretacion,
         )
 
     def _obtener_knowledge_para_etapa(
@@ -1018,32 +1037,62 @@ class ConversationManager:
         etapa: EtapaConversacion,
         mensaje: str,
         respuesta_logica: str,
+        session: Any = None,
+        interpretacion: Any = None,
     ) -> str:
         """Usa la IA para mejorar la respuesta lógica con lenguaje natural."""
         if self.ai is None or not self.ai.disponible:
             return respuesta_logica
 
-        knowledge = self._obtener_knowledge_para_etapa(lead, etapa, mensaje)
+        # ── Director decide el objetivo ──
+        from app.services.commercial_memory import get_memory
+        memory = get_memory()
+        context = memory.get_or_create(lead.lead_id)
+        objetivo = self._director.decidir(lead, context, interpretacion)
 
         logger.debug(
-            "[AI] Generando respuesta — etapa=%s, knowledge_len=%d, msg=%s",
-            etapa.value, len(knowledge), mensaje[:40],
+            "[DIRECTOR] user=%s, objetivo=%s, dato=%s, razon=%s",
+            session.telegram_id if session else "?",
+            objetivo.accion, objetivo.dato_requerido or "-",
+            objetivo.razon[:60],
         )
 
-        resultado = self.ai.generar_respuesta(
-            lead=lead,
-            etapa=etapa,
-            knowledge=knowledge,
-            mensaje_cliente=mensaje,
-            respuesta_fallback=respuesta_logica,
-        )
+        # ── PromptBuilder con objetivo obligatorio ──
+        try:
+            from app.services.commercial_prompt_builder import CommercialPromptBuilder
+            builder = CommercialPromptBuilder()
+            knowledge = self._obtener_knowledge_para_etapa(lead, etapa, mensaje)
+            historial = self._obtener_historial(session) if session else []
 
-        logger.debug(
-            "[AI] Respuesta generada (%d chars) — fallback_used=%s",
-            len(resultado), resultado == respuesta_logica,
-        )
+            prompt = builder.build(
+                lead=lead,
+                historial=historial,
+                mensaje=mensaje,
+                etapa=etapa,
+                knowledge=knowledge,
+                datos_faltantes=objetivo.todos_faltantes,
+                context=context,
+                objetivo=objetivo,
+            )
 
-        return resultado
+            resultado_llm = self.ai._client.generar_respuesta(
+                mensajes=prompt,
+                temperatura=0.3,
+                max_tokens=500,
+            )
+
+            if resultado_llm.exito and resultado_llm.texto:
+                logger.debug(
+                    "[AI+DIRECTOR] Respuesta generada (%d chars) — objetivo=%s",
+                    len(resultado_llm.texto), objetivo.accion,
+                )
+                return resultado_llm.texto
+
+        except Exception as e:
+            logger.warning("[AI+DIRECTOR] Error: %s", e)
+
+        # ── Fallback: respuesta lógica del handler ──
+        return respuesta_logica
 
     # ─────────────────────────────────────────
     # DB helpers
