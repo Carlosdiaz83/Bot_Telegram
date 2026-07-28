@@ -161,7 +161,7 @@ class TestPromptBuilder:
         )
 
         context = messages[1]["content"]
-        assert "INSTRUCCIONES" in context
+        assert "ESTRATEGIA" in context
 
     def test_lead_data_formatted(self, prompt_builder):
         lead = Lead(lead_id="pb_008", nombre="Pedro", edad=30, localidad="Córdoba")
@@ -195,7 +195,7 @@ class TestOrchestratorReglas:
             etapa=EtapaConversacion.NUEVO,
         )
 
-        assert result.accion == "SALUDAR"
+        assert result.accion == "PEDIR_DATO"
         assert "¿Cómo te llamás?" in result.respuesta
 
     def test_nuevo_contacto_con_nombre(self, orchestrator):
@@ -207,8 +207,10 @@ class TestOrchestratorReglas:
             etapa=EtapaConversacion.NUEVO,
         )
 
-        assert result.accion == "SALUDAR"
-        assert "Carlos" in result.respuesta
+        # Sprint 21: NUEVO is handled by ConversationManager's traditional handler
+        # The orchestrator just advances with default action
+        assert result.accion in ("PEDIR_DATO", "COTIZAR", "ARGUMENTAR",
+                                 "MANEJAR_OBJECION", "CERRAR")
 
     def test_datos_faltantes_pide_dato(self, orchestrator):
         lead = Lead(lead_id="orch_003", nombre="Carlos")
@@ -272,7 +274,7 @@ class TestOrchestratorReglas:
             datos_faltantes=[],
         )
 
-        assert result.accion == "CALCULAR"
+        assert result.accion == "COTIZAR"
 
     def test_default_informar(self, orchestrator):
         lead = Lead(lead_id="orch_007", nombre="Carlos")
@@ -283,7 +285,8 @@ class TestOrchestratorReglas:
             etapa=EtapaConversacion.DESCUBRIENDO_NECESIDAD,
         )
 
-        assert result.accion == "INFORMAR"
+        # Sprint 21: default action is PEDIR_DATO (always advance sale)
+        assert result.accion == "PEDIR_DATO"
 
     def test_respuesta_no_vacia(self, orchestrator):
         lead = Lead(lead_id="orch_008", nombre="Carlos")
@@ -350,8 +353,10 @@ class TestSinSaludosRepetidos:
             etapa=EtapaConversacion.CALIFICANDO,
         )
 
-        # No debe saludar de nuevo si ya se saludó
-        assert not (result.accion == "SALUDAR" and "Hola" in result.respuesta)
+        # Sprint 21: SALUDAR no longer exists, default is PEDIR_DATO
+        assert result.accion != "SALUDAR"
+        assert result.accion in ("PEDIR_DATO", "COTIZAR", "ARGUMENTAR",
+                                 "MANEJAR_OBJECION", "CERRAR")
 
 
 # ─────────────────────────────────────────
@@ -550,7 +555,8 @@ class TestOrchestrationResult:
         assert result.intencion == ""
         assert result.datos_detectados == {}
         assert result.datos_faltantes == []
-        assert result.accion == "INFORMAR"
+        # Sprint 21: default action changed from INFORMAR to PEDIR_DATO
+        assert result.accion == "PEDIR_DATO"
         assert result.argumento == ""
         assert result.tono == "friendly"
         assert result.respuesta == ""

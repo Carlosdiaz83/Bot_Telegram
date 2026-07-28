@@ -1,14 +1,20 @@
 """
-Commercial AI Orchestrator — Sprint 20.
+Commercial AI Orchestrator — Sprint 21.
 
-Orquestador comercial que razona antes de responder.
+Orquestador comercial con razonamiento de ventas.
 
 NO calcula. NO accede a Excel. NO consulta precios directamente.
-Su única función es razonar y decidir qué acción tomar.
+Su única función es razonar, decidir qué acción tomar Y validar la respuesta.
 
 Flujo:
     ConversationManager → Orchestrator.analizar() → OrchestrationResult
     ConversationManager usa el resultado para ejecutar la acción correspondiente.
+
+Sprint 21:
+    - Acciones reducidas a5: PEDIR_DATO, COTIZAR, ARGUMENTAR, MANEJAR_OBJECION, CERRAR
+    - Autocrítica antes de enviar respuesta
+    - Mejor detección de objeciones y cierre
+    - Lógica por etapa más inteligente
 """
 
 from __future__ import annotations
@@ -18,15 +24,14 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from app.models.lead import Lead
+from app.models.lead import Lead, TipoAfiliacion
 from app.services.session_manager import EtapaConversacion
 
 logger = logging.getLogger(__name__)
 
 
 ACCIONES_VALIDAS = frozenset({
-    "PEDIR_DATO", "CALCULAR", "ARGUMENTAR", "MANEJAR_OBJECION",
-    "CERRAR", "SALUDAR", "INFORMAR", "DERIVAR",
+    "PEDIR_DATO", "COTIZAR", "ARGUMENTAR", "MANEJAR_OBJECION", "CERRAR",
 })
 
 
@@ -47,7 +52,7 @@ class OrchestrationResult:
     intencion: str = ""
     datos_detectados: dict[str, Any] = field(default_factory=dict)
     datos_faltantes: list[str] = field(default_factory=list)
-    accion: str = "INFORMAR"
+    accion: str = "PEDIR_DATO"
     argumento: str = ""
     tono: str = "friendly"
     respuesta: str = ""
@@ -55,7 +60,7 @@ class OrchestrationResult:
 
 class CommercialAIOrchestrator:
     """
-    Orquestador comercial con razonamiento IA.
+    Orquestador comercial con razonamiento de ventas.
 
     Analiza cada mensaje del cliente y decide:
         - Qué quiso decir realmente
@@ -63,9 +68,45 @@ class CommercialAIOrchestrator:
         - Cuál es la siguiente acción comercial
         - Cómo responder de forma natural
 
+    Valida la respuesta con autocrítica antes de devolverla.
+
     No genera precios ni calcula nada.
-    Solo razona y decide qué servicio invocar.
+    Solo razona, decide y valida.
     """
+
+    # ── Patrones de intención ──
+    _PATRONES_COTIZAR: frozenset[str] = frozenset({
+        "cotizar", "cotice", "cotización", "precio", "precios",
+        "cuánto", "cuanto", "costo", "vale", "cuesta",
+        "querés saber", "contame", "decime",
+        "cuánto cuesta", "cuánto sale",
+        "quiero información", "info", "información",
+        "osde", "nóbis", "nobis", "swiss", "medimax",
+        "aumentó", "subió",
+    })
+
+    _PATRONES_OBJECION: frozenset[str] = frozenset({
+        "caro", "barato", "costoso", "muy alto", "no llego",
+        "no puedo pagar", "no me da", "no estoy seguro", "no sé si",
+        "necesito pensar", "lo voy a pensar",
+        "después", "mañana", "no tengo tiempo",
+        "no conozco", "nunca escuché",
+        "no me da confianza", "dudando",
+        "no estoy convencido", "no sé",
+        "tengo que pensarlo", "lo pienso",
+        "pago mucho", "estoy pagando mucho", "muy caro",
+        "necesito algo más barato", "algo más barato",
+        "me gustaría algo más económico",
+    })
+
+    _PATRONES_CIERRE: frozenset[str] = frozenset({
+        "dale", "avanzamos", "quiero", "contratar",
+        "afiliarme", "dame", "tomalo", "sí",
+        "ok", "perfecto", "excelente", "genial",
+        "hacelo", "arrancamos", "empezamos",
+        "estoy listo", "estoy dentro", "metele",
+        "sí quiero", "dale avance", "sigamos",
+    })
 
     def __init__(
         self,
@@ -112,6 +153,7 @@ class CommercialAIOrchestrator:
         3. Qué falta
         4. Cuál es la siguiente acción comercial
         5. Cómo responder
+        6. Valida la respuesta con autocrítica
 
         Args:
             lead: Lead con todos los datos del cliente.
@@ -134,7 +176,16 @@ class CommercialAIOrchestrator:
             return resultado_ai
 
         # Fallback: razonamiento basado en reglas
-        return self._razonar_con_reglas(lead, mensaje, etapa, datos_faltantes)
+        resultado_reglas = self._razonar_con_reglas(
+            lead, mensaje, etapa, datos_faltantes
+        )
+
+        # Autocrítica del resultado de reglas
+        resultado_reglas = self._autocritica(
+            resultado_reglas, lead, historial, mensaje, etapa
+        )
+
+        return resultado_reglas
 
     def _razonar_con_ia(
         self,
@@ -167,6 +218,12 @@ class CommercialAIOrchestrator:
 
             if resultado_llm.exito and resultado_llm.texto:
                 resultado = self._parsear_respuesta(resultado_llm.texto)
+
+                # Autocrítica del resultado de IA
+                resultado = self._autocritica(
+                    resultado, lead, historial, mensaje, etapa
+                )
+
                 logger.info(
                     "[ORCHESTRATOR] IA razonó — accion=%s, intencion=%s, "
                     "datos_nuevos=%d, faltantes=%d",
@@ -197,9 +254,9 @@ class CommercialAIOrchestrator:
                 json_str = texto[start:end]
                 data = json.loads(json_str)
 
-                accion = data.get("accion", "INFORMAR").upper()
+                accion = data.get("accion", "PEDIR_DATO").upper()
                 if accion not in ACCIONES_VALIDAS:
-                    accion = "INFORMAR"
+                    accion = "PEDIR_DATO"
 
                 return OrchestrationResult(
                     intencion=data.get("intencion", ""),
@@ -217,7 +274,7 @@ class CommercialAIOrchestrator:
         # Fallback: usar el texto completo como respuesta
         return OrchestrationResult(
             intencion="no_parseable",
-            accion="INFORMAR",
+            accion="PEDIR_DATO",
             respuesta=texto[:300],
         )
 
@@ -233,29 +290,56 @@ class CommercialAIOrchestrator:
 
         Implementa la lógica comercial sin LLM.
         """
-        mensaje_lower = mensaje.lower()
+        mensaje_lower = mensaje.lower().strip()
 
-        # ── NUEVO: Primer contacto ──
-        if etapa == EtapaConversacion.NUEVO:
-            if lead.nombre:
-                return OrchestrationResult(
-                    intencion="nuevo_contacto_con_nombre",
-                    accion="SALUDAR",
-                    tono="friendly",
-                    respuesta=(
-                        f"¡Hola {lead.nombre}! Soy Sofía, asesora de Servired. "
-                        "¿En qué te puedo ayudar?"
-                    ),
-                )
+        # ── Detectar objeciones (prioridad sobre todo) ──
+        if any(kw in mensaje_lower for kw in self._PATRONES_OBJECION):
             return OrchestrationResult(
-                intencion="nuevo_contacto",
-                accion="SALUDAR",
-                tono="friendly",
+                intencion="objecion_detectada",
+                accion="MANEJAR_OBJECION",
+                tono="empathetic",
                 respuesta=(
-                    "¡Hola! Soy Sofía, asesora de Servired. "
-                    "¿Cómo te llamás?"
+                    "Entiendo tu preocupación. Déjame explicarte "
+                    "por qué nuestros planes son una buena opción para vos."
                 ),
             )
+
+        # ── Detectar cierre (prioridad sobre pedir datos) ──
+        if any(kw in mensaje_lower for kw in self._PATRONES_CIERRE):
+            if etapa in (
+                EtapaConversacion.PRESENTANDO_VALOR,
+                EtapaConversacion.INTENTANDO_CIERRE,
+                EtapaConversacion.MANEJANDO_OBJECIONES,
+            ):
+                return OrchestrationResult(
+                    intencion="interes_en_cierre",
+                    accion="CERRAR",
+                    tono="professional",
+                    respuesta=(
+                        "¡Excelente! Un asesor se comunicará con vos "
+                        "para completar el proceso. ¡Bienvenido a Servired!"
+                    ),
+                )
+
+        # ── Detectar intención de cotizar ──
+        if any(kw in mensaje_lower for kw in self._PATRONES_COTIZAR):
+            # Si tiene datos faltantes, pedir
+            if datos_faltantes:
+                return OrchestrationResult(
+                    intencion="quiere_cotizar_datos_faltantes",
+                    datos_faltantes=datos_faltantes,
+                    accion="PEDIR_DATO",
+                    tono="professional",
+                    respuesta=self._generar_pregunta(datos_faltantes[0]),
+                )
+            # Si tiene tipo de afiliación, cotizar
+            if lead.tipo_afiliacion:
+                return OrchestrationResult(
+                    intencion="quiere_cotizar",
+                    accion="COTIZAR",
+                    tono="professional",
+                    respuesta="Con tus datos, te preparo la cotización.",
+                )
 
         # ── Pedir datos faltantes ──
         if datos_faltantes:
@@ -267,58 +351,21 @@ class CommercialAIOrchestrator:
                 respuesta=self._generar_pregunta(datos_faltantes[0]),
             )
 
-        # ── Detectar objeciones ──
-        objecion_keywords = [
-            "caro", "costoso", "no llego", "muy alto", "no puedo pagar",
-            "no estoy seguro", "no sé si", "necesito pensar", "lo voy a pensar",
-            "después", "mañana", "no tengo tiempo", "ocupado",
-            "no conozco", "nunca escuché", "no me da confianza",
-        ]
-        if any(kw in mensaje_lower for kw in objecion_keywords):
-            return OrchestrationResult(
-                intencion="objecion_detectada",
-                accion="MANEJAR_OBJECION",
-                tono="empathetic",
-                respuesta=(
-                    "Entiendo tu preocupación. Déjame explicarte "
-                    "por qué nuestros planes son una buena opción para vos."
-                ),
-            )
-
-        # ── Detectar cierre ──
-        cierre_keywords = [
-            "dale", "avanzamos", "quiero", "sí", "si", "ok",
-            "perfecto", "excelente", "contratar", "afiliarme",
-        ]
-        if any(kw in mensaje_lower for kw in cierre_keywords):
-            return OrchestrationResult(
-                intencion="interes_en_cierre",
-                accion="CERRAR",
-                tono="professional",
-                respuesta=(
-                    "¡Excelente! Un asesor se comunicará con vos "
-                    "para completar el proceso. ¡Bienvenido a Servired!"
-                ),
-            )
-
-        # ── Datos completos → calcular ──
+        # ── Datos completos → cotizar ──
         if not datos_faltantes and lead.tipo_afiliacion:
             return OrchestrationResult(
                 intencion="datos_completos",
-                accion="CALCULAR",
+                accion="COTIZAR",
                 tono="professional",
                 respuesta="Con tus datos, te preparo la cotización.",
             )
 
-        # ── Default: informar ──
+        # ── Default: pedir dato relevante ──
         return OrchestrationResult(
-            intencion="consulta_general",
-            accion="INFORMAR",
+            intencion="avanzar_calificacion",
+            accion="PEDIR_DATO",
             tono="friendly",
-            respuesta=(
-                "Contame un poco más sobre lo que necesitás "
-                "y te ayudo a encontrar la mejor opción."
-            ),
+            respuesta=self._generar_pregunta_default(lead),
         )
 
     def _generar_pregunta(self, dato: str) -> str:
@@ -342,6 +389,142 @@ class CommercialAIOrchestrator:
             ),
         }
         return preguntas.get(dato, f"Necesito saber: {dato}")
+
+    def _generar_pregunta_default(self, lead: Lead) -> str:
+        """Genera una pregunta por defecto según el estado del lead."""
+        if not lead.nombre:
+            return "¿Cómo te llamás?"
+        if not lead.tipo_afiliacion:
+            return (
+                "¿Cómo es tu situación laboral? "
+                "(relación de dependencia, monotributo o particular)"
+            )
+        if not lead.edad:
+            return "¿Cuántos años tenés?"
+        if not lead.localidad:
+            return "¿De qué localidad sos?"
+        return "Contame un poco más sobre lo que necesitás."
+
+    def _autocritica(
+        self,
+        resultado: OrchestrationResult,
+        lead: Lead,
+        historial: list[dict[str, str]],
+        mensaje: str,
+        etapa: EtapaConversacion,
+    ) -> OrchestrationResult:
+        """
+        Valida la respuesta con autocrítica.
+
+        6 puntos de validación:
+        1. ¿Estoy repitiendo algo que ya dije?
+        2. ¿Estoy saludando de nuevo?
+        3. ¿Estoy preguntando algo que ya sé?
+        4. ¿Me estoy desviando del tema?
+        5. ¿Estoy inventando información?
+        6. ¿Esta respuesta acerca al cliente a la afiliación?
+
+        Si falla alguna validación, intenta corregir.
+        """
+        if not resultado.respuesta:
+            return resultado
+
+        respuesta_lower = resultado.respuesta.lower()
+
+        # 1. ¿Repite saludo?
+        if resultado.accion not in ("PEDIR_DATO", "COTIZAR", "ARGUMENTAR",
+                                     "MANEJAR_OBJECION", "CERRAR"):
+            # Acción inválida → corregir
+            if datos_faltantes := resultado.datos_faltantes:
+                resultado.accion = "PEDIR_DATO"
+                resultado.respuesta = self._generar_pregunta(datos_faltantes[0])
+            elif lead.tipo_afiliacion:
+                resultado.accion = "COTIZAR"
+                resultado.respuesta = "Con tus datos, te preparo la cotización."
+            else:
+                resultado.accion = "PEDIR_DATO"
+                resultado.respuesta = self._generar_pregunta_default(lead)
+
+        # 2. ¿Ya saludó?
+        if etapa != EtapaConversacion.NUEVO:
+            saludos = ["¡hola", "hola!", "buenos días", "buenas tardes",
+                       "qué tal"]
+            for saludo in saludos:
+                if saludo in respuesta_lower:
+                    # Reemplazar saludo por acción comercial
+                    if lead.tipo_afiliacion:
+                        resultado.accion = "PEDIR_DATO"
+                        resultado.respuesta = self._generar_pregunta(
+                            resultado.datos_faltantes[0]
+                            if resultado.datos_faltantes
+                            else "nombre"
+                        )
+                    elif lead.nombre:
+                        resultado.accion = "PEDIR_DATO"
+                        resultado.respuesta = (
+                            "¿Cómo es tu situación laboral? "
+                            "(relación de dependencia, monotributo o particular)"
+                        )
+                    break
+
+        # 3. ¿Pregunta algo que ya sabe?
+        if lead.nombre and "¿cómo te llamás" in respuesta_lower:
+            resultado.respuesta = resultado.respuesta.replace(
+                "¿Cómo te llamás?", "¿En qué te puedo ayudar?"
+            )
+
+        if lead.edad and "¿cuántos años tenés" in respuesta_lower:
+            resultado.respuesta = resultado.respuesta.replace(
+                "¿Cuántos años tenés?", "¿De qué localidad sos?"
+            )
+
+        if lead.localidad and "¿de qué localidad sos" in respuesta_lower:
+            resultado.respuesta = resultado.respuesta.replace(
+                "¿De qué localidad sos?", "¿Tenés el recibo de sueldo a mano?"
+            )
+
+        # 4. ¿Se desvía del tema?
+        if etapa in (
+            EtapaConversacion.PRESENTANDO_VALOR,
+            EtapaConversacion.INTENTANDO_CIERRE,
+            EtapaConversacion.MANEJANDO_OBJECIONES,
+        ):
+            desviaciones = ["contame sobre vos", "cuéntame de ti",
+                            "¿qué hacés?", "¿a qué te dedicás?"]
+            for desv in desviaciones:
+                if desv in respuesta_lower:
+                    resultado.accion = "ARGUMENTAR"
+                    resultado.respuesta = (
+                        "Vamos a enfocarnos en tu cotización. "
+                        "¿Qué necesitás saber para avanzar?"
+                    )
+                    break
+
+        # 5. ¿Inventa información?
+        inventos = ["promoción especial", "oferta limitada", "solo hoy",
+                    "precio especial", "descuento exclusivo"]
+        for invento in inventos:
+            if invento in respuesta_lower:
+                resultado.respuesta = (
+                    "Con tus datos, te preparo la cotización "
+                    "y ves exactamente cuánto pagarías."
+                )
+                resultado.accion = "COTIZAR" if lead.tipo_afiliacion else "PEDIR_DATO"
+                break
+
+        # 6. ¿Acerca al cierre?
+        if etapa == EtapaConversacion.PRESENTANDO_VALOR:
+            preguntas_desviadas = ["¿te interesa?", "¿querés saber más?",
+                                   "¿algo más?", "¿otra cosa?"]
+            for preg in preguntas_desviadas:
+                if preg in respuesta_lower:
+                    resultado.accion = "CERRAR"
+                    resultado.respuesta = (
+                        "¿Querés que avance con el proceso de afiliación?"
+                    )
+                    break
+
+        return resultado
 
     def _obtener_knowledge(
         self, lead: Lead, etapa: EtapaConversacion, mensaje: str

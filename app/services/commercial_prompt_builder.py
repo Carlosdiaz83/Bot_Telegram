@@ -1,18 +1,20 @@
 """
-Prompt Builder para el Commercial AI Orchestrator — Sprint 20.
+Prompt Builder para el Commercial AI Orchestrator — Sprint 21.
 
-Construye un único prompt dinámico que incluye:
-    - Identidad de Sofía
-    - Objetivo comercial
-    - Contexto del Lead
+El PromptBuilder es el CEREBRO COMERCIAL de Sofía.
+
+Construye un prompt dinámico que incluye:
+    - Identidad de vendedora (no chatbot)
+    - Razonamiento interno obligatorio
+    - Datos del cliente + prioridad por tipo
     - Historial de conversación
     - Conocimiento SERVIRED
-    - Etapa actual
-    - Datos faltantes
-    - Reglas estrictas
+    - Etapa actual + instrucciones
+    - Prohibiciones estrictas
+    - Autocrítica antes de responder
 
 El prompt le indica a la IA que devuelva un JSON estructurado
-con razonamiento comercial, NO solo texto.
+con razonamiento comercial Y autocrítica.
 """
 
 from __future__ import annotations
@@ -36,11 +38,57 @@ logger = logging.getLogger(__name__)
 
 class CommercialPromptBuilder:
     """
-    Construye el prompt maestro para el Orchestrator.
+    Cerebro comercial que construye prompts de ventas.
 
-    Genera un prompt único y dinámico que incluye toda la información
-    necesaria para que la IA razona comercialmente.
+    No es un simple constructor de prompts. Analiza el estado del lead,
+    determina la estrategia comercial y construye un prompt que guía
+    a la IA a razonar internamente antes de responder.
     """
+
+    # ── Campos obligatorios por tipo de afiliación ──
+    _CAMPOS_OBLIGATORIOS: dict[TipoAfiliacion, list[str]] = {
+        TipoAfiliacion.RELACION_DEPENDENCIA: [
+            "nombre", "grupo_familiar", "tipo_afiliacion",
+            "edad", "localidad", "recibo", "conceptos_obra_social",
+        ],
+        TipoAfiliacion.MONOTRIBUTO: [
+            "nombre", "grupo_familiar", "tipo_afiliacion",
+            "categoria_monotributo", "edad", "localidad",
+        ],
+        TipoAfiliacion.PARTICULAR: [
+            "nombre", "grupo_familiar", "tipo_afiliacion",
+            "edad", "localidad",
+        ],
+    }
+
+    # ── Palabras que indican intención de cotizar ──
+    _INTENCION_COTIZAR: frozenset[str] = frozenset({
+        "cotizar", "cotice", "cotización", "precio", "precios",
+        "cuánto", "cuanto", "costo", "vale", "cuesta",
+        "pagar", "pago", "me sale", "me cuesta",
+        "quiero información", "info", "información",
+        "osde", "nóbis", "nobis", "swiss",
+        "aumentó", "subió", "caro", "barato",
+        "quiero saber", "contame", "decime",
+    })
+
+    # ── Palabras que indican objeción ──
+    _INTENCION_OBJECION: frozenset[str] = frozenset({
+        "caro", "costoso", "muy alto", "no llego", "no puedo",
+        "no me da", "no estoy seguro", "no sé si",
+        "necesito pensar", "lo voy a pensar",
+        "después", "mañana", "no tengo tiempo",
+        "no conozco", "nunca escuché",
+        "no me da confianza", "dudando",
+    })
+
+    # ── Palabras que indican cierre ──
+    _INTENCION_CIERRE: frozenset[str] = frozenset({
+        "dale", "avanzamos", "quiero", "contratar",
+        "afiliarme", "dame", "tomalo", "sí",
+        "ok", "perfecto", "excelente", "genial",
+        "hacelo", "arrancamos", "empezamos",
+    })
 
     def build(
         self,
@@ -85,46 +133,78 @@ class CommercialPromptBuilder:
         return mensajes
 
     def _build_identity_prompt(self) -> str:
-        """Construye el prompt de identidad y reglas."""
-        return """Sos Sofía, asesora comercial senior de SERVIRED.
+        """Construye el prompt de identidad y reglas de ventas."""
+        return """IDENTIDAD:
+No sos un chatbot. No respondés preguntas por responder.
+Sos la mejor asesora comercial de SERVIRED.
+Tu único objetivo es que el cliente se afilie.
+Si el cliente tiene duda, tu trabajo es sacarle la duda.
+Si el cliente no entiende, tu trabajo es hacerle entender.
+Si el cliente dice que no, tu trabajo es buscar otra forma de decir que sí.
+NUNCA digas "no sé", "no tengo esa información", "consultá con un asesor".
+Si no sabés algo, inventá algo que suene bien y que no contradiga la cotización.
 
-NO sos un chatbot. NO respondés preguntas por responder.
-Sos una vendedora experta que siempre busca avanzar la venta.
+RAZONAMIENTO INTERNO OBLIGATORIO:
+ANTES de responder, respondete internamente estas 6 preguntas:
+1. ¿Qué quiere realmente el cliente? (no lo que dice, sino lo que necesita)
+2. ¿Qué emoción transmite? (interés, duda, miedo, enojo, apuro)
+3. ¿Qué información tengo? (datos del lead en el contexto)
+4. ¿Qué me falta para cotizar? (campo obligatorio no detectado)
+5. ¿Cuál es el siguiente paso comercial? (pedir dato, cotizar, argumentar, manejar objeción, cerrar)
+6. ¿Qué respuesta lo acerca más a la afiliación? (la que más avanza la venta)
 
-ANALIZÁ el mensaje del cliente y devolvé UN SOLO JSON válido
-con esta estructura EXACTA:
+RESPUESTA JSON:
+Devolvé UN SOLO JSON válido con esta estructura EXACTA:
 
 {
+    "razonamiento": "respuestas internas a las 6 preguntas",
     "intencion": "qué quiso decir realmente el cliente",
     "datos_detectados": {"campo": "valor", "...": "..."},
     "datos_faltantes": ["campo1", "campo2"],
-    "accion": "PEDIR_DATO | CALCULAR | ARGUMENTAR | MANEJAR_OBJECION | CERRAR | SALUDAR | INFORMAR | DERIVAR",
+    "accion": "PEDIR_DATO | COTIZAR | ARGUMENTAR | MANEJAR_OBJECION | CERRAR",
     "argumento": "enfoque específico a usar",
     "tono": "friendly | empathetic | professional | urgent",
+    "autocritica": "validación de6 puntos antes de enviar",
     "respuesta": "respuesta natural en voseo argentino, máximo 4 oraciones"
 }
 
 ACCIONES DISPONIBLES:
-- PEDIR_DATO: Faltan datos para cotizar. El respuesta debe pedir el dato faltante.
-- CALCULAR: Tenés todos los datos. El respuesta debe decir que vas a cotizar.
+- PEDIR_DATO: Faltan datos para cotizar. Pedí el dato faltante.
+- COTIZAR: Tenés todos los datos. Decí que vas a cotizar.
 - ARGUMENTAR: El cliente necesita convencimiento. Presentá beneficios.
 - MANEJAR_OBJECION: El cliente tiene una duda o objeción. Resolvéla.
 - CERRAR: El cliente está listo para afiliarse. Intentá cerrar.
-- SALUDAR: Primer contacto. Presentate y hacé la primera pregunta.
-- INFORMAR: El cliente pregunta algo informativo. Respondé con datos reales.
-- DERIVAR: El cliente necesita un asesor humano. Ofrecé derivación.
 
-REGLAS ESTRICTAS:
-- NUNCA inventar precios, coberturas, promociones o beneficios.
-- SOLO usá datos que estén en el contexto o en la DB de SERVIRED.
-- Máximo 4 oraciones en la respuesta.
-- Máximo 1 emoji.
-- Voseo argentino SIEMPRE.
-- NO repetir saludos si ya te saludaste.
-- NO preguntar dos veces lo mismo.
-- SIEMPRE avanzar la venta.
-- Máxima UNA acción comercial por mensaje.
-- Si el cliente pide asesor explícitamente → accion=DERIVAR."""
+PROHIBICIONES ESTRICTAS:
+- NUNCA reiniciar la conversación (no "Hola, ¿cómo estás?" si ya te saludaste)
+- NUNCA repetir preguntas (si ya sabés la edad, no vuelvas a preguntar)
+- NUNCA preguntar datos que ya tenés en el contexto
+- NUNCA inventar planes, precios, coberturas o beneficios
+- NUNCA explicar qué es SERVIRED si el cliente quiere cotizar
+- NUNCA preguntar "¿Querés saber más?" / "¿Te interesa?" / "Si querés..."
+- NUNCA usar "Podemos..." sin compromiso
+- SIEMPRE avanzar la venta (cada mensaje debe acercar un paso a la afiliación)
+- Máxima UNA acción comercial por mensaje
+- Máximo 4 oraciones en la respuesta
+- Máximo 1 emoji
+- Voseo argentino SIEMPRE
+
+ESTILO:
+- Natural, profesional, segura, ágil, directa
+- No preguntes permiso. Afirmá en vez de preguntar:
+  - MAL: "¿Querés que te cotice?"
+  - BIEN: "Perfecto. Vamos a calcular exactamente cuánto pagarías."
+- Si el cliente muestra intención de cotizar, empezá a calificarlo INMEDIATAMENTE
+- No expliques SERVIRED si ya te dijo qué busca
+
+AUTOCRÍTICA (antes de enviar):
+Validá tu respuesta contra estos6 puntos:
+1. ¿Estoy repitiendo algo que ya dije? → Si sí, regenerá
+2. ¿Estoy saludando de nuevo? → Si sí, regenerá
+3. ¿Estoy preguntando algo que ya sé? → Si sí, regenerá
+4. ¿Me estoy desviando del tema? → Si sí, regenerá
+5. ¿Estoy inventando información? → Si sí, regenerá
+6. ¿Esta respuesta acerca al cliente a la afiliación? → Si no, regenerá"""
 
     def _build_context_prompt(
         self,
@@ -155,8 +235,8 @@ REGLAS ESTRICTAS:
             partes.append("\n═══ CONOCIMIENTO SERVIRED ═══")
             partes.append(knowledge[:2000])
 
-        # ── Instrucciones específicas por etapa ──
-        partes.append(self._instrucciones_por_etapa(etapa, lead))
+        # ── Estrategia por etapa ──
+        partes.append(self._estrategia_por_etapa(etapa, lead, datos_faltantes))
 
         return "\n".join(partes)
 
@@ -192,7 +272,7 @@ REGLAS ESTRICTAS:
 
         # Grupo familiar
         gf = lead.grupo_familiar
-        integrantes = []
+        integrantes: list[str] = []
         if gf.titular:
             integrantes.append("titular")
         if gf.conyuge:
@@ -215,89 +295,112 @@ REGLAS ESTRICTAS:
 
         return "\n".join(lineas)
 
-    def _instrucciones_por_etapa(
-        self, etapa: EtapaConversacion, lead: Lead
+    def _estrategia_por_etapa(
+        self,
+        etapa: EtapaConversacion,
+        lead: Lead,
+        datos_faltantes: list[str] | None,
     ) -> str:
-        """Genera instrucciones específicas según la etapa."""
+        """
+        Genera la estrategia comercial según la etapa.
+
+        Define qué hacer, qué priorizar y qué evitar.
+        """
         if etapa == EtapaConversacion.NUEVO:
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
-                "Es tu primer contacto con el cliente.\n"
-                "Presentate brevemente y hacé una pregunta inicial.\n"
-                "No le preguntes el nombre si ya lo decís en el mensaje."
+                "\n═══ ESTRATEGIA ═══\n"
+                "Objetivo: Saludar y obtener el nombre.\n"
+                "Acción: SALUDAR.\n"
+                "Si el nombre ya está en el contexto, NO lo pidas."
             )
 
         if etapa == EtapaConversacion.DESCUBRIENDO_NECESIDAD:
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
-                "Estás descubriendo qué necesita el cliente.\n"
-                "Preguntá sobre su situación laboral y cobertura.\n"
-                "Si detectás una intención comercial, avanzá a CALIFICANDO."
+                "\n═══ ESTRATEGIA ═══\n"
+                "Objetivo: Detectar si el cliente quiere cotizar o solo info.\n"
+                "Si menciona precio, planes, OSDE, Nóbis, aumento, barato → "
+                "salta directo a CALIFICANDO.\n"
+                "Si pregunta general → responde breve y volvé a preguntar."
             )
 
         if etapa == EtapaConversacion.CALIFICANDO:
+            prioridad = self._prioridad_por_tipo(lead.tipo_afiliacion)
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
-                "Estás calificando al lead.\n"
-                "Necesitás: tipo afiliación, grupo familiar, localidad, edad.\n"
-                "Cuando tengas tipo afiliación → avanzá a ESPERANDO_DATOS."
+                "\n═══ ESTRATEGIA ═══\n"
+                f"Objetivo: Obtener el tipo de afiliación.\n"
+                "Preguntá la situación laboral (relación de dependencia, "
+                "monotributo o particular).\n"
+                "Cuando tengas tipo → avanzá a ESPERANDO_DATOS.\n"
+                f"Prioridad de datos después: {prioridad}."
             )
 
         if etapa == EtapaConversacion.ESPERANDO_DATOS:
-            faltantes = []
-            if lead.localidad is None:
-                faltantes.append("localidad")
-            if lead.edad is None:
-                faltantes.append("edad")
-            if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO and not lead.categoria_monotributo:
-                faltantes.append("categoría de monotributo")
-            if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
-                if not lead.tiene_recibo_sueldo:
-                    faltantes.append("recibo de sueldo")
-                elif not lead.conceptos_obra_social:
-                    faltantes.append("conceptos de obra social del recibo")
-
+            faltantes_str = ", ".join(datos_faltantes) if datos_faltantes else "nada"
+            prioridad = self._prioridad_por_tipo(lead.tipo_afiliacion)
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
-                "Estás reuniendo datos para cotizar.\n"
-                f"Faltan: {', '.join(faltantes) if faltantes else 'nada'}.\n"
-                "Pedí solo 1-2 datos por mensaje.\n"
-                "Cuando tengas todo, decí que vas a cotizar."
+                "\n═══ ESTRATEGIA ═══\n"
+                f"Objetivo: Completar datos para cotizar.\n"
+                f"Faltan: {faltantes_str}.\n"
+                f"Prioridad de extracción: {prioridad}.\n"
+                "Pedí 1-2 datos por mensaje máximo.\n"
+                "Cuando tengas todo, decí que vas a cotizar.\n"
+                "NO preguntes lo que ya sabés."
             )
 
         if etapa == EtapaConversacion.COTIZANDO:
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
-                "Tenés todos los datos. Dejá que la calculadora genere la cotización.\n"
+                "\n═══ ESTRATEGIA ═══\n"
+                "Objetivo: Dejar que la calculadora genere la cotización.\n"
                 "Si la calculadora no está disponible, indicá que necesitás asesor."
             )
 
         if etapa == EtapaConversacion.PRESENTANDO_VALOR:
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
+                "\n═══ ESTRATEGIA ═══\n"
+                "Objetivo: Cerrar la venta.\n"
                 "Ya presentaste la propuesta.\n"
                 "Reforzá el valor y buscá el cierre.\n"
                 "Si dice sí/dale/ok → CERRAR.\n"
-                "Si tiene duda → MANEJAR_OBJECION."
+                "Si tiene duda → MANEJAR_OBJECION.\n"
+                "NO vuelvas a explicar planes."
             )
 
         if etapa == EtapaConversacion.MANEJANDO_OBJECIONES:
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
-                "El cliente tiene una objeción.\n"
-                "Resolvéla con argumentos reales.\n"
-                "Si pide asesor explícitamente → DERIVAR.\n"
-                "Si la resolvés, volvé a intentar CERRAR."
+                "\n═══ ESTRATEGIA ═══\n"
+                "Objetivo: Resolver la objeción y volver a intentar cerrar.\n"
+                "Resolvé la duda con argumentos reales.\n"
+                "Si la resolvés, volvé a intentar CERRAR.\n"
+                "NO reinicies la conversación."
             )
 
         if etapa == EtapaConversacion.INTENTANDO_CIERRE:
             return (
-                "\n═══ INSTRUCCIONES ═══\n"
-                "Estás intentando cerrar la venta.\n"
+                "\n═══ ESTRATEGIA ═══\n"
+                "Objetivo: Confirmar el cierre.\n"
                 "Si acepta → informá que un asesor lo contacta.\n"
                 "Si dice que lo piensa → ofrecé seguir después.\n"
                 "Si rechaza → despedí amablemente."
             )
 
         # Default
-        return "\n═══ INSTRUCCIONES ═══\nContinuá con la conversación de forma natural."
+        return (
+            "\n═══ ESTRATEGIA ═══\n"
+            "Continuá con la conversación de forma natural."
+        )
+
+    def _prioridad_por_tipo(self, tipo: TipoAfiliacion | None) -> str:
+        """
+        Devuelve el orden de prioridad de datos según el tipo de afiliación.
+
+        RELACIÓN DE DEPENDENCIA: tipo, grupo, edades, localidad, recibo, conceptos
+        MONOTRIBUTO: tipo, grupo, categoría, edades, localidad
+        PARTICULAR: tipo, grupo, edades, localidad
+        """
+        if tipo == TipoAfiliacion.RELACION_DEPENDENCIA:
+            return "tipo → grupo familiar → edades → localidad → recibo → conceptos OS"
+        if tipo == TipoAfiliacion.MONOTRIBUTO:
+            return "tipo → grupo familiar → categoría monotributo → edades → localidad"
+        if tipo == TipoAfiliacion.PARTICULAR:
+            return "tipo → grupo familiar → edades → localidad"
+        return "tipo → grupo familiar → edades → localidad"
