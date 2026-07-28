@@ -98,6 +98,7 @@ class CommercialPromptBuilder:
         etapa: EtapaConversacion,
         knowledge: str = "",
         datos_faltantes: list[str] | None = None,
+        context: Any = None,
     ) -> list[dict[str, str]]:
         """
         Construye el prompt completo para el LLM.
@@ -109,13 +110,14 @@ class CommercialPromptBuilder:
             etapa: Etapa actual de la conversación.
             knowledge: Contexto recuperado del Knowledge Engine.
             datos_faltantes: Lista de datos que faltan para cotizar.
+            context: CommercialConversationContext (memoria comercial).
 
         Returns:
             Lista de mensajes en formato OpenAI.
         """
         system_identity = self._build_identity_prompt()
         system_context = self._build_context_prompt(
-            lead, historial, etapa, knowledge, datos_faltantes
+            lead, historial, etapa, knowledge, datos_faltantes, context
         )
 
         mensajes: list[dict[str, str]] = [
@@ -213,9 +215,14 @@ Validá tu respuesta contra estos6 puntos:
         etapa: EtapaConversacion,
         knowledge: str,
         datos_faltantes: list[str] | None,
+        context: Any = None,
     ) -> str:
         """Construye el prompt de contexto con todos los datos disponibles."""
         partes: list[str] = []
+
+        # ── Memoria comercial (Sprint 21.5) ──
+        if context is not None:
+            partes.append(self._build_memory_section(context))
 
         # ── Datos del Lead ──
         partes.append("═══ DATOS DEL CLIENTE ═══")
@@ -226,9 +233,17 @@ Validá tu respuesta contra estos6 puntos:
 
         # ── Datos faltantes ──
         if datos_faltantes:
-            partes.append("\n═══ DATOS QUE FALTAN PARA COTIZAR ═══")
-            for d in datos_faltantes:
-                partes.append(f"  - {d}")
+            # Filtrar datos que ya están confirmados en memoria
+            faltantes_reales = datos_faltantes
+            if context is not None:
+                faltantes_reales = [
+                    d for d in datos_faltantes
+                    if not context.ya_tiene(d)
+                ]
+            if faltantes_reales:
+                partes.append("\n═══ DATOS QUE FALTAN PARA COTIZAR ═══")
+                for d in faltantes_reales:
+                    partes.append(f"  - {d}")
 
         # ── Conocimiento SERVIRED ──
         if knowledge:
@@ -236,7 +251,7 @@ Validá tu respuesta contra estos6 puntos:
             partes.append(knowledge[:2000])
 
         # ── Estrategia por etapa ──
-        partes.append(self._estrategia_por_etapa(etapa, lead, datos_faltantes))
+        partes.append(self._estrategia_por_etapa(etapa, lead, datos_faltantes, context))
 
         return "\n".join(partes)
 
@@ -295,22 +310,72 @@ Validá tu respuesta contra estos6 puntos:
 
         return "\n".join(lineas)
 
+    def _build_memory_section(self, context: Any) -> str:
+        """
+        Construye la sección de memoria comercial para el prompt.
+
+        Args:
+            context: CommercialConversationContext con el estado de la memoria.
+
+        Returns:
+            Sección formateada de memoria.
+        """
+        partes: list[str] = []
+        partes.append("═══ MEMORIA COMERCIAL ═══")
+        partes.append(f"  Objetivo actual: {context.objetivo_actual or 'N/A'}")
+        partes.append(f"  Próximo objetivo: {context.proximo_objetivo or 'N/A'}")
+        partes.append(f"  Progreso: {context.progreso}%")
+
+        # Datos confirmados
+        if context.datos_confirmados:
+            partes.append("\n  Datos confirmados (NO volver a pedir):")
+            for campo, valor in context.datos_confirmados.items():
+                partes.append(f"    ✓ {campo}: {valor}")
+
+        # Datos faltantes
+        if context.datos_faltantes:
+            partes.append("\n  Datos pendientes:")
+            for campo in context.datos_faltantes:
+                partes.append(f"    ✗ {campo}")
+
+        # Objeciones
+        if context.objeciones_detectadas:
+            partes.append(
+                f"\n  Objeciones detectadas: {', '.join(context.objeciones_detectadas)}"
+            )
+        else:
+            partes.append("\n  Objeciones detectadas: ninguna")
+
+        # Interés y riesgo
+        partes.append(f"  Nivel de interés: {context.nivel_interes}/100 ({context.interes_detectado or 'N/A'})")
+        partes.append(f"  Riesgo de perder venta: {context.riesgo_perder_venta or 'N/A'}")
+
+        # Regla estricta
+        partes.append("\n  REGLA: NUNCA pedir datos que están en confirmados.")
+
+        return "\n".join(partes)
+
     def _estrategia_por_etapa(
         self,
         etapa: EtapaConversacion,
         lead: Lead,
         datos_faltantes: list[str] | None,
+        context: Any = None,
     ) -> str:
         """
         Genera la estrategia comercial según la etapa.
 
         Define qué hacer, qué priorizar y qué evitar.
+        Usa la memoria para determinar el próximo objetivo.
         """
+        # Si hay contexto con próximo objetivo, usarlo
+        proximo = context.proximo_objetivo if context else None
+
         if etapa == EtapaConversacion.NUEVO:
             return (
                 "\n═══ ESTRATEGIA ═══\n"
                 "Objetivo: Saludar y obtener el nombre.\n"
-                "Acción: SALUDAR.\n"
+                "Acción: PEDIR_DATO.\n"
                 "Si el nombre ya está en el contexto, NO lo pidas."
             )
 
@@ -337,7 +402,7 @@ Validá tu respuesta contra estos6 puntos:
         if etapa == EtapaConversacion.ESPERANDO_DATOS:
             faltantes_str = ", ".join(datos_faltantes) if datos_faltantes else "nada"
             prioridad = self._prioridad_por_tipo(lead.tipo_afiliacion)
-            return (
+            estrategia = (
                 "\n═══ ESTRATEGIA ═══\n"
                 f"Objetivo: Completar datos para cotizar.\n"
                 f"Faltan: {faltantes_str}.\n"
@@ -346,6 +411,9 @@ Validá tu respuesta contra estos6 puntos:
                 "Cuando tengas todo, decí que vas a cotizar.\n"
                 "NO preguntes lo que ya sabés."
             )
+            if proximo:
+                estrategia += f"\nPróximo paso: {proximo}."
+            return estrategia
 
         if etapa == EtapaConversacion.COTIZANDO:
             return (

@@ -79,6 +79,84 @@
     </div>
 </div>
 
+{% if memory_context %}
+<div class="card" style="margin-top: 2rem; border-left: 4px solid #1a237e;">
+    <h2>Memoria Comercial</h2>
+    <div class="detail-grid">
+        <div class="detail-item">
+            <div class="label">Objetivo Actual</div>
+            <div class="value" style="font-weight: 700; color: #1a237e;">{{ memory_context.objetivo_actual or '-' }}</div>
+        </div>
+        <div class="detail-item">
+            <div class="label">Proximo Objetivo</div>
+            <div class="value" style="font-weight: 600;">{{ memory_context.proximo_objetivo or '-' }}</div>
+        </div>
+        <div class="detail-item">
+            <div class="label">Progreso</div>
+            <div class="value">
+                {{ memory_context.progreso }}%
+                <div class="score-bar">
+                    <div class="score-fill" style="width: {{ memory_context.progreso }}%; background: #1a237e;"></div>
+                </div>
+            </div>
+        </div>
+        <div class="detail-item">
+            <div class="label">Nivel de Interes</div>
+            <div class="value">{{ memory_context.nivel_interes }}/100
+                <span class="badge badge-{{ 'caliente' if memory_context.nivel_interes >= 70 else ('tibio' if memory_context.nivel_interes >= 40 else 'frio') }}">
+                    {{ memory_context.interes_detectado or '-' }}
+                </span>
+            </div>
+        </div>
+        <div class="detail-item">
+            <div class="label">Riesgo Perder Venta</div>
+            <div class="value">
+                <span class="badge badge-{{ 'danger' if memory_context.riesgo_perder_venta == 'ALTO' else ('warning' if memory_context.riesgo_perder_venta == 'MEDIO' else 'success') }}">
+                    {{ memory_context.riesgo_perder_venta or '-' }}
+                </span>
+            </div>
+        </div>
+        <div class="detail-item">
+            <div class="label">Cotizacion Realizada</div>
+            <div class="value">{{ 'Si' if memory_context.cotizacion_realizada else 'No' }}</div>
+        </div>
+    </div>
+
+    {% if memory_context.datos_confirmados %}
+    <div style="margin-top: 1rem;">
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.5rem;">Datos Confirmados</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
+            {% for campo, valor in memory_context.datos_confirmados.items() %}
+            <span class="badge badge-success" style="font-size: 0.8rem;">✓ {{ campo }}: {{ valor }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if memory_context.datos_faltantes %}
+    <div style="margin-top: 1rem;">
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.5rem;">Datos Pendientes</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
+            {% for campo in memory_context.datos_faltantes %}
+            <span class="badge badge-warning" style="font-size: 0.8rem;">✗ {{ campo }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if memory_context.objeciones_detectadas %}
+    <div style="margin-top: 1rem;">
+        <h3 style="font-size: 0.95rem; margin-bottom: 0.5rem;">Objeciones Detectadas</h3>
+        <div style="display: flex; flex-wrap: wrap; gap: 0.4rem;">
+            {% for obj in memory_context.objeciones_detectadas %}
+            <span class="badge badge-danger" style="font-size: 0.8rem;">{{ obj }}</span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 <div class="actions">
     <h2>Acciones Comerciales</h2>
     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">

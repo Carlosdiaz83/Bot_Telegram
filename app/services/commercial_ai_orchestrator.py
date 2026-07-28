@@ -1,10 +1,11 @@
 """
-Commercial AI Orchestrator — Sprint 21.
+Commercial AI Orchestrator — Sprint 21.5.
 
-Orquestador comercial con razonamiento de ventas.
+Orquestador comercial con razonamiento de ventas Y memoria persistente.
 
 NO calcula. NO accede a Excel. NO consulta precios directamente.
-Su única función es razonar, decidir qué acción tomar Y validar la respuesta.
+Su función es razonar, decidir qué acción tomar, validar la respuesta
+Y mantener la memoria comercial viva durante toda la conversación.
 
 Flujo:
     ConversationManager → Orchestrator.analizar() → OrchestrationResult
@@ -14,7 +15,12 @@ Sprint 21:
     - Acciones reducidas a5: PEDIR_DATO, COTIZAR, ARGUMENTAR, MANEJAR_OBJECION, CERRAR
     - Autocrítica antes de enviar respuesta
     - Mejor detección de objeciones y cierre
-    - Lógica por etapa más inteligente
+
+Sprint 21.5:
+    - CommercialMemory integrada
+    - PromptBuilder recibe contexto de memoria
+    - Datos confirmados nunca se vuelven a pedir
+    - Objetivo y próximo objetivo persisten
 """
 
 from __future__ import annotations
@@ -126,12 +132,14 @@ class CommercialAIOrchestrator:
         self._knowledge_engine = knowledge_engine
         self._knowledge = knowledge_service
 
-        # Importar prompt builder de forma lazy
+        # Importar servicios de forma lazy
         from app.services.commercial_prompt_builder import CommercialPromptBuilder
+        from app.services.commercial_memory import get_memory
         self._prompt_builder = CommercialPromptBuilder()
+        self._memory = get_memory()
 
         logger.info(
-            "[ORCHESTRATOR] Inicializado — ai=%s, knowledge_db=%s",
+            "[ORCHESTRATOR] Inicializado — ai=%s, knowledge_db=%s, memory=enabled",
             "enabled" if ai_service and ai_service.disponible else "disabled",
             "enabled" if knowledge_engine else "disabled",
         )
@@ -149,7 +157,7 @@ class CommercialAIOrchestrator:
 
         Este es el punto de entrada principal. La IA analiza:
         1. Qué quiso decir realmente el cliente
-        2. Qué datos ya tenemos
+        2. Qué datos ya tenemos (desde memoria)
         3. Qué falta
         4. Cuál es la siguiente acción comercial
         5. Cómo responder
@@ -165,24 +173,53 @@ class CommercialAIOrchestrator:
         Returns:
             OrchestrationResult con razonamiento estructurado.
         """
+        # ── Obtener o crear contexto de memoria ──
+        context = self._memory.get_or_create(lead.lead_id)
+        self._memory.actualizar(
+            lead=lead, mensaje=mensaje, accion="",
+            datos_faltantes=datos_faltantes,
+        )
+        context = self._memory.get_or_create(lead.lead_id)
+
+        # Usar faltantes de memoria si no se proveen
+        if datos_faltantes is None:
+            datos_faltantes = context.datos_faltantes
+
         # Obtener knowledge context
         knowledge = self._obtener_knowledge(lead, etapa, mensaje)
 
         # Intentar razonamiento con IA
         resultado_ai = self._razonar_con_ia(
-            lead, historial, mensaje, etapa, knowledge, datos_faltantes
+            lead, historial, mensaje, etapa, knowledge,
+            datos_faltantes, context,
         )
         if resultado_ai is not None:
+            self._memory.actualizar(
+                lead=lead, mensaje=mensaje,
+                accion=resultado_ai.accion,
+                datos_detectados=resultado_ai.datos_detectados,
+                datos_faltantes=resultado_ai.datos_faltantes,
+                respuesta=resultado_ai.respuesta,
+            )
             return resultado_ai
 
         # Fallback: razonamiento basado en reglas
         resultado_reglas = self._razonar_con_reglas(
-            lead, mensaje, etapa, datos_faltantes
+            lead, mensaje, etapa, datos_faltantes, context
         )
 
         # Autocrítica del resultado de reglas
         resultado_reglas = self._autocritica(
-            resultado_reglas, lead, historial, mensaje, etapa
+            resultado_reglas, lead, historial, mensaje, etapa, context
+        )
+
+        # Actualizar memoria
+        self._memory.actualizar(
+            lead=lead, mensaje=mensaje,
+            accion=resultado_reglas.accion,
+            datos_detectados=resultado_reglas.datos_detectados,
+            datos_faltantes=resultado_reglas.datos_faltantes,
+            respuesta=resultado_reglas.respuesta,
         )
 
         return resultado_reglas
@@ -195,6 +232,7 @@ class CommercialAIOrchestrator:
         etapa: EtapaConversacion,
         knowledge: str,
         datos_faltantes: list[str] | None,
+        context: Any = None,
     ) -> OrchestrationResult | None:
         """Intenta razonar usando el LLM. Retorna None si falla."""
         if not self._ai or not self._ai.disponible:
@@ -208,6 +246,7 @@ class CommercialAIOrchestrator:
                 etapa=etapa,
                 knowledge=knowledge,
                 datos_faltantes=datos_faltantes,
+                context=context,
             )
 
             resultado_llm = self._ai._client.generar_respuesta(
@@ -221,7 +260,7 @@ class CommercialAIOrchestrator:
 
                 # Autocrítica del resultado de IA
                 resultado = self._autocritica(
-                    resultado, lead, historial, mensaje, etapa
+                    resultado, lead, historial, mensaje, etapa, context
                 )
 
                 logger.info(
@@ -284,6 +323,7 @@ class CommercialAIOrchestrator:
         mensaje: str,
         etapa: EtapaConversacion,
         datos_faltantes: list[str] | None = None,
+        context: Any = None,
     ) -> OrchestrationResult:
         """
         Razonamiento basado en reglas (fallback cuando no hay IA).
@@ -412,6 +452,7 @@ class CommercialAIOrchestrator:
         historial: list[dict[str, str]],
         mensaje: str,
         etapa: EtapaConversacion,
+        context: Any = None,
     ) -> OrchestrationResult:
         """
         Valida la respuesta con autocrítica.
@@ -523,6 +564,57 @@ class CommercialAIOrchestrator:
                         "¿Querés que avance con el proceso de afiliación?"
                     )
                     break
+
+        # 7. No preguntar datos confirmados (memoria)
+        if context is not None:
+            resultado = self._no_preguntar_confirmados(resultado, context)
+
+        return resultado
+
+    def _no_preguntar_confirmados(
+        self, resultado: OrchestrationResult, context: Any
+    ) -> OrchestrationResult:
+        """
+        Si la IA pregunta un dato que la memoria ya confirmó, reemplaza.
+
+        Args:
+            resultado: Resultado a validar.
+            context: CommercialConversationContext con datos confirmados.
+
+        Returns:
+            Resultado corregido.
+        """
+        if not context.datos_confirmados:
+            return resultado
+
+        respuesta_lower = resultado.respuesta.lower()
+
+        # Mapa de preguntas → campo confirmado
+        _preguntas_a_campo = {
+            "¿cómo te llamás": "nombre",
+            "¿cuántos años tenés": "edad",
+            "¿de qué localidad sos": "localidad",
+            "situación laboral": "tipo_afiliacion",
+            "relación de dependencia": "tipo_afiliacion",
+            "monotributo o particular": "tipo_afiliacion",
+            "¿en qué categoría": "categoria_monotributo",
+            "recibo de sueldo": "recibo",
+            "conceptos de obra social": "conceptos_obra_social",
+            "grupo familiar": "grupo_familiar",
+            "solo para vos": "grupo_familiar",
+        }
+
+        for pregunta, campo in _preguntas_a_campo.items():
+            if pregunta in respuesta_lower and context.ya_tiene(campo):
+                # Dato confirmado — no preguntar de nuevo
+                # Reemplazar por el siguiente paso
+                if context.datos_faltantes:
+                    siguiente = context.datos_faltantes[0]
+                    resultado.respuesta = self._generar_pregunta(siguiente)
+                elif context.tipo_afiliacion:
+                    resultado.accion = "COTIZAR"
+                    resultado.respuesta = "Con tus datos, te preparo la cotización."
+                break
 
         return resultado
 

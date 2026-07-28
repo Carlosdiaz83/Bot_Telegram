@@ -133,7 +133,7 @@ def lead_detail(
     lead_id: int,
     db: Session = Depends(get_panel_db),
 ) -> HTMLResponse:
-    """Detalle completo de un lead con historial de conversación."""
+    """Detalle completo de un lead con historial de conversación y memoria comercial."""
     lead_db = db.get(LeadDB, lead_id)
     if lead_db is None:
         return RedirectResponse(url="/leads", status_code=303)
@@ -144,6 +144,15 @@ def lead_detail(
     # Calcular score de forma segura
     score_val = lead_db.score if lead_db.score is not None else 0
 
+    # Obtener memoria comercial del lead (Sprint 21.5)
+    memory_context = None
+    try:
+        from app.services.commercial_memory import get_memory
+        memory = get_memory()
+        memory_context = memory.get_or_create(str(lead_db.id))
+    except Exception:
+        memory_context = None
+
     return templates.TemplateResponse(
         request,
         "lead_detail.html",
@@ -152,6 +161,7 @@ def lead_detail(
             "historial": historial,
             "score_pct": min(score_val, 100),
             "estados": ESTADOS_COMERCIALES,
+            "memory_context": memory_context,
         },
     )
 
