@@ -65,11 +65,11 @@ def lead_particular():
 class TestDecisionesBasicas:
     """Tests de las decisiones fundamentales del Director."""
 
-    def test_sin_grupo_familiar_pide_grupo(self, director, lead_nombre, memoria):
+    def test_sin_tipo_pide_tipo(self, director, lead_nombre, memoria):
         context = memoria.get_or_create(lead_nombre.lead_id)
         objetivo = director.decidir(lead_nombre, context)
         assert objetivo.accion == "PEDIR_DATO"
-        assert objetivo.dato_requerido == "grupo_familiar"
+        assert objetivo.dato_requerido == "tipo_afiliacion"
 
     def test_sin_tipo_afiliacion_pide_tipo(self, director, memoria):
         lead = Lead(
@@ -144,7 +144,7 @@ class TestDatosPorTipo:
         assert objetivo.accion == "PEDIR_DATO"
         assert objetivo.dato_requerido == "recibo_sueldo"
 
-    def test_relacion_dependencia_con_recibo_pide_conceptos(self, director, memoria):
+    def test_relacion_dependencia_con_recibo_cotiza(self, director, memoria):
         lead = Lead(
             lead_id="dir_022", nombre="Carlos",
             tipo_afiliacion=TipoAfiliacion.RELACION_DEPENDENCIA,
@@ -153,8 +153,7 @@ class TestDatosPorTipo:
         )
         context = memoria.get_or_create(lead.lead_id)
         objetivo = director.decidir(lead, context)
-        assert objetivo.accion == "PEDIR_DATO"
-        assert objetivo.dato_requerido == "conceptos_obra_social"
+        assert objetivo.accion == "COTIZAR"
 
 
 # ─────────────────────────────────────────
@@ -293,11 +292,11 @@ class TestProhibiciones:
 class TestPrioridad:
     """Tests de que el Director sigue el orden de prioridad correcto."""
 
-    def test_grupo_antes_que_tipo(self, director, memoria):
+    def test_tipo_antes_que_grupo(self, director, memoria):
         lead = Lead(lead_id="dir_050", nombre="Carlos")
         context = memoria.get_or_create(lead.lead_id)
         objetivo = director.decidir(lead, context)
-        assert objetivo.dato_requerido == "grupo_familiar"
+        assert objetivo.dato_requerido == "tipo_afiliacion"
 
     def test_tipo_antes_que_edad(self, director, memoria):
         lead = Lead(lead_id="dir_051", nombre="Carlos")

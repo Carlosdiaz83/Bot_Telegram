@@ -827,13 +827,8 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.COTIZANDO)
             return self._handle_cotizando(session, mensaje)
 
-        # Preguntar lo que falta (combinar hasta 2)
+        # UNA sola pregunta por mensaje — nunca combinar
         session.mensajes_en_etapa += 1
-        if len(faltantes) >= 2:
-            return (
-                f"Necesito saber: {faltantes[0]} y {faltantes[1]}. "
-                "Así te preparo la mejor propuesta."
-            )
         return f"¿{faltantes[0].capitalize()}?"
 
     def _handle_cotizando(self, session: UserSession, mensaje: str) -> str:
@@ -930,38 +925,13 @@ class ConversationManager:
         return montos
 
     def _generar_siguiente_pregunta(self, lead: Lead, proxima_pregunta: str) -> str:
-        """Genera el texto de la siguiente pregunta. Combina preguntas cuando es posible."""
-        faltantes = []
-        if lead.tipo_afiliacion is None:
-            faltantes.append("tu situación laboral (relación de dependencia, monotributo o particular)")
-        if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
-            faltantes.append("si la cobertura sería solo para vos o incluye familia")
-        if lead.localidad is None:
-            faltantes.append("de qué localidad sos")
-        if lead.edad is None:
-            faltantes.append("cuántos años tenés")
-
-        tiene_intencion = (
-            lead.interes_detectado is not None
-            and lead.interes_detectado != InteresDetectado.INFORMACION_GENERAL
-        )
-
-        if tiene_intencion and len(faltantes) >= 2:
-            return (
-                f"Necesito saber: {faltantes[0]} y {faltantes[1]}. "
-                "Así te preparo la mejor propuesta."
-            )
-
+        """Genera el texto de la siguiente pregunta. Siempre UNA sola pregunta."""
         preguntas = {
             "nombre": "¿Cómo te llamás?",
             "tipo_afiliacion": generar_pregunta_situacion_actual(),
-            "tiene_aportes": "¿Contás con aportes actualmente?",
             "grupo_familiar": generar_pregunta_grupo_familiar(),
-            "cantidad_hijos": "¿Cuántos hijos tenés?",
             "localidad": "¿De qué localidad sos?",
             "edad": "¿Cuántos años tenés?",
-            "necesidad_principal": generar_pregunta_prioridad(),
-            "interes_detectado": "¿Qué te gustaría saber de Servired?",
         }
 
         return preguntas.get(proxima_pregunta, "¿Podés contarme un poco más?")

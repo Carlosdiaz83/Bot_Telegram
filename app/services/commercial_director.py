@@ -1,18 +1,16 @@
 """
-Commercial Director — Sprint 22.
+Commercial Director — Sprint 22 / V3.
 
 El ÚNICO componente que decide el objetivo comercial del próximo mensaje.
 
 NO genera texto. NO llama al LLM. NO consulta documentos.
 Solo decide: qué se va a hacer en el próximo mensaje.
 
-El LLM solamente redacta siguiendo el objetivo que el Director define.
-
-Flujo:
-    ConversationManager → Orchestrator.interpreta()
-    → CommercialDirector.decidir() → ObjetivoComercial
-    → CommercialPromptBuilder.build(objetivo=...)
-    → LLM solo redacta
+Flujo obligatorio (máquina de estados):
+    1. Identificar tipo de afiliación (particular / monotributo / recibo)
+    2. Recolectar SOLO los datos necesarios para ese tipo
+    3. Cuando todos los datos existen → cotizar INMEDIATAMENTE
+    4. Una vez cotizada → cerrar la afiliación
 
 Regla fundamental:
     Mientras falte un dato obligatorio, queda prohibido:
@@ -22,6 +20,10 @@ Regla fundamental:
     - intentar cerrar
     - hacer comparaciones
     El ÚNICO objetivo es conseguir el dato faltante.
+
+Auditoría:
+    Cada decisión genera un log estructurado con estado,
+    datos confirmados, datos faltantes y motivo.
 """
 
 from __future__ import annotations
@@ -126,25 +128,22 @@ class CommercialDirector:
         if interpretacion is not None:
             objecion = getattr(interpretacion, "objecion_detectada", None)
             if objecion is None:
-                # Buscar en datos del resultado
                 intencion = getattr(interpretacion, "intencion", "")
                 if "objecion" in intencion.lower():
                     objecion = intencion
 
             if objecion:
-                return ObjetivoComercial(
+                objetivo = ObjetivoComercial(
                     accion="REBATIR_OBJECION",
                     razon=f"objeción detectada: {objecion}",
                     prohibiciones=_PROHIBICIONES["REBATIR_OBJECION"],
                     proximo_si_responde="PEDIR_DATO",
                 )
+                self._log_auditoria(lead, context, objetivo, "FLUJO_V3_OBJECION")
+                return objetivo
 
-        # ── 2. ¿Etapa es MANEJANDO_OBJECIONES? → REBATIR ──
-        # (Se verifica por si el handler ya cambió la etapa)
-
-        # ── 3. ¿Cotización ya presentada? ──
+        # ── 2. ¿Cotización ya presentada? ──
         if context is not None and context.cotizacion_realizada:
-            # Buscar señal de cierre
             es_cierre = False
             if interpretacion is not None:
                 intencion = getattr(interpretacion, "intencion", "")
@@ -154,25 +153,29 @@ class CommercialDirector:
                 ])
 
             if es_cierre:
-                return ObjetivoComercial(
+                objetivo = ObjetivoComercial(
                     accion="CERRAR",
                     razon="cotización presentada + cliente quiere avanzar",
                     prohibiciones=_PROHIBICIONES["CERRAR"],
                 )
+                self._log_auditoria(lead, context, objetivo, "FLUJO_V3_CIERRA")
+                return objetivo
 
-            return ObjetivoComercial(
+            objetivo = ObjetivoComercial(
                 accion="PRESENTAR_VALOR",
                 razon="cotización presentada, reforzar valor",
                 prohibiciones=_PROHIBICIONES["PRESENTAR_VALOR"],
                 proximo_si_responde="CERRAR",
             )
+            self._log_auditoria(lead, context, objetivo, "FLUJO_V3_PRESENTA_VALOR")
+            return objetivo
 
-        # ── 4. ¿Faltan datos obligatorios? → PEDIR_DATO ──
+        # ── 3. ¿Faltan datos obligatorios? → PEDIR_DATO ──
         faltantes = self._datos_faltantes(lead, context)
         if faltantes:
             siguiente = faltantes[0]
             proximo = faltantes[1] if len(faltantes) > 1 else self._proximo_despues_de(siguiente, lead)
-            return ObjetivoComercial(
+            objetivo = ObjetivoComercial(
                 accion="PEDIR_DATO",
                 dato_requerido=siguiente,
                 todos_faltantes=faltantes,
@@ -180,15 +183,76 @@ class CommercialDirector:
                 proximo_si_responde=proximo,
                 razon=f"faltan datos: {', '.join(faltantes)}",
             )
+            self._log_auditoria(lead, context, objetivo, "FLUJO_V3_PIDE_DATO")
+            return objetivo
 
-        # ── 5. Todos los datos completos → COTIZAR ──
-        return ObjetivoComercial(
+        # ── 4. Todos los datos completos → COTIZAR ──
+        objetivo = ObjetivoComercial(
             accion="COTIZAR",
             todos_faltantes=[],
             prohibiciones=_PROHIBICIONES["COTIZAR"],
             proximo_si_responde="PRESENTAR_VALOR",
             razon="todos los datos obligatorios están completos",
         )
+        self._log_auditoria(lead, context, objetivo, "FLUJO_V3_COTIZA")
+        return objetivo
+
+    def _log_auditoria(
+        self,
+        lead: Lead,
+        context: Any,
+        objetivo: ObjetivoComercial,
+        regla: str,
+    ) -> None:
+        """
+        Log de auditoría estructurado para cada decisión del Director.
+
+        Formato:
+            [DIRECTOR] Decisión: PEDIR_DATO
+            Estado actual: CALIFICANDO
+            Datos confirmados: ✔ Tipo afiliación, ✔ Edad, ✘ Localidad
+            Próximo objetivo: PEDIR_LOCALIDAD
+            Motivo: Es el único dato faltante para cotizar.
+            Regla aplicada: FLUJO_V3_PIDE_DATO
+        """
+        # Calcular datos confirmados vs faltantes
+        campos_obligatorios = self._campos_obligatorios(lead)
+        confirmados = []
+        faltantes = []
+        for campo in campos_obligatorios:
+            if self._esta_confirmado(campo, lead, context):
+                confirmados.append(campo)
+            else:
+                faltantes.append(campo)
+
+        confirmados_str = ", ".join(
+            [f"✔ {c}" for c in confirmados] + [f"✘ {c}" for c in faltantes]
+        ) if (confirmados or faltantes) else "ninguno"
+
+        logger.info(
+            "[DIRECTOR] Decisión: %s | Dato: %s\n"
+            "  Datos: %s\n"
+            "  Próximo: %s\n"
+            "  Motivo: %s\n"
+            "  Regla: %s",
+            objetivo.accion,
+            objetivo.dato_requerido or "-",
+            confirmados_str,
+            objetivo.proximo_si_responde or "COTIZAR",
+            objetivo.razon[:80],
+            regla,
+        )
+
+    def _campos_obligatorios(self, lead: Lead) -> list[str]:
+        """Lista los campos obligatorios según el tipo de afiliación."""
+        base = ["tipo_afiliacion"]
+        if lead.tipo_afiliacion == TipoAfiliacion.PARTICULAR:
+            base.extend(["edad", "localidad"])
+        elif lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
+            base.extend(["categoria_monotributo", "edad", "localidad"])
+        elif lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
+            base.extend(["recibo_sueldo", "edad", "localidad"])
+        return base
 
     def _datos_faltantes(
         self, lead: Lead, context: Any = None
@@ -196,10 +260,15 @@ class CommercialDirector:
         """
         Lista los datos que faltan para poder cotizar, en orden de prioridad.
 
-        Prioridad:
-            1. Grupo familiar (solo o familia)
-            2. Tipo de afiliación
-            3. Según tipo: edades, localidad, categoría, recibo, conceptos
+        Flujo obligatorio (máquina de estados):
+            1. Tipo de afiliación (siempre primero)
+            2. Grupo familiar (solo se pregunta si tipo aún no se conoce)
+            3. Según tipo: solo los datos estrictamente necesarios
+
+        Regla:
+            Una vez que tipo_afiliacion está set, grupo_familiar se
+            auto-confirmó (el cliente ya indicó su situación al decir
+            "particular", "monotributo" o "recibo de sueldo").
 
         Args:
             lead: Lead con datos actuales.
@@ -210,30 +279,32 @@ class CommercialDirector:
         """
         faltantes: list[str] = []
 
-        # ── 1. Grupo familiar ──
+        # ── 1. Tipo de afiliación (PRIMERO SIEMPRE) ──
+        if lead.tipo_afiliacion is None:
+            faltantes.append("tipo_afiliacion")
+            return faltantes
+
+        # ── 2. Grupo familiar (solo si tipo aún no set) ──
         if not self._esta_confirmado("grupo_familiar", lead, context):
-            # Si el lead solo tiene titular y no se preguntó → falta
             if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
-                # Solo falta si no se confirmó que es solo titular
                 if not self._esta_confirmado("grupo_familiar_solo", lead, context):
                     faltantes.append("grupo_familiar")
 
-        # ── 2. Tipo de afiliación ──
-        if lead.tipo_afiliacion is None:
-            faltantes.append("tipo_afiliacion")
-
-        # ── 3. Datos según tipo ──
-        if lead.tipo_afiliacion is not None:
-            faltantes.extend(
-                self._datos_por_tipo(lead, context)
-            )
+        # ── 3. Datos según tipo (solo los estrictamente necesarios) ──
+        faltantes.extend(self._datos_por_tipo(lead, context))
 
         return faltantes
 
     def _datos_por_tipo(
         self, lead: Lead, context: Any = None
     ) -> list[str]:
-        """Datos obligatorios según el tipo de afiliación."""
+        """
+        Datos obligatorios según el tipo de afiliación.
+
+        PARTICULAR: solo edad y localidad.
+        MONOTRIBUTO: categoría, edad y localidad.
+        RECIBO DE SUELDO: recibo, edad y localidad.
+        """
         faltantes: list[str] = []
 
         tipo = lead.tipo_afiliacion
@@ -255,9 +326,6 @@ class CommercialDirector:
         elif tipo == TipoAfiliacion.RELACION_DEPENDENCIA:
             if lead.tiene_recibo_sueldo is None:
                 faltantes.append("recibo_sueldo")
-            elif lead.tiene_recibo_sueldo and not lead.conceptos_obra_social:
-                if not self._esta_confirmado("conceptos_obra_social", lead, context):
-                    faltantes.append("conceptos_obra_social")
             if not self._esta_confirmado("edad", lead, context):
                 faltantes.append("edad")
             if not self._esta_confirmado("localidad", lead, context):
@@ -325,7 +393,14 @@ class CommercialDirector:
     def _proximo_despues_de(
         self, dato_actual: str, lead: Lead
     ) -> str | None:
-        """Determina cuál es el siguiente paso después de obtener un dato."""
+        """
+        Determina cuál es el siguiente paso después de obtener un dato.
+
+        Flujo obligatorio:
+            PARTICULAR: tipo → edad → localidad → COTIZAR
+            MONOTRIBUTO: tipo → categoría → edad → localidad → COTIZAR
+            RECIBO: tipo → recibo → edad → localidad → COTIZAR
+        """
         orden_tipo = {
             TipoAfiliacion.PARTICULAR: [
                 "tipo_afiliacion", "edad", "localidad",
@@ -334,8 +409,7 @@ class CommercialDirector:
                 "tipo_afiliacion", "categoria_monotributo", "edad", "localidad",
             ],
             TipoAfiliacion.RELACION_DEPENDENCIA: [
-                "tipo_afiliacion", "recibo_sueldo", "conceptos_obra_social",
-                "edad", "localidad",
+                "tipo_afiliacion", "recibo_sueldo", "edad", "localidad",
             ],
         }
 

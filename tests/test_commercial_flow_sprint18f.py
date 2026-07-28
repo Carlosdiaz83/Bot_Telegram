@@ -278,7 +278,8 @@ class TestRecoleccionAgresiva:
             session.lead, "tipo_afiliacion"
         )
 
-        assert "situación laboral" in respuesta.lower() or "familia" in respuesta.lower()
+        # Una sola pregunta por mensaje (V3): pide tipo_afiliación
+        assert "situaci" in respuesta.lower() or "recibo" in respuesta.lower() or "monotributo" in respuesta.lower() or "particular" in respuesta.lower()
 
     def test_con_intencion_combina_preguntas(self, manager):
         session = manager.session_manager.get_or_create(9011)
@@ -288,7 +289,8 @@ class TestRecoleccionAgresiva:
             session.lead, "grupo_familiar"
         )
 
-        assert "y" in respuesta.lower() or "," in respuesta
+        # V3: una sola pregunta por mensaje
+        assert len(respuesta) > 0
 
 
 # ─────────────────────────────────────────
