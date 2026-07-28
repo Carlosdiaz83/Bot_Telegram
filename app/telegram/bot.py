@@ -64,7 +64,7 @@ class TelegramBot:
 
     async def _handle_error(self, update: object, context: object) -> None:
         """Handler global de errores de Telegram."""
-        logger.error("Error en handler de Telegram: %s", context, exc_info=True)
+        logger.error("Error en handler de Telegram", exc_info=context.error)
 
     def _setup_signal_handlers(self) -> None:
         """

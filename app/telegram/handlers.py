@@ -101,7 +101,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "Disculpá, tuve un problema técnico. Por favor, intentá de nuevo."
             )
         except Exception:
-            logger.error("[TELEGRAM] No se pudo enviar mensaje de error a %s", nombre)
+            logger.error("[TELEGRAM] No se pudo enviar mensaje de error a %s", nombre, exc_info=True)
 
 
 async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

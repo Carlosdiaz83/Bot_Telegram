@@ -273,7 +273,7 @@ class CommercialAIOrchestrator:
                 return resultado
 
         except Exception as e:
-            logger.warning("[ORCHESTRATOR] Error en IA: %s", e)
+            logger.warning("[ORCHESTRATOR] Error en IA: %s", e, exc_info=True)
 
         return None
 

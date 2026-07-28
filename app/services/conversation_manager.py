@@ -1089,7 +1089,7 @@ class ConversationManager:
                 return resultado_llm.texto
 
         except Exception as e:
-            logger.warning("[AI+DIRECTOR] Error: %s", e)
+            logger.warning("[AI+DIRECTOR] Error: %s", e, exc_info=True)
 
         # ── Fallback: respuesta lógica del handler ──
         return respuesta_logica
