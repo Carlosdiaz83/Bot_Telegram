@@ -121,6 +121,16 @@ class TelegramBot:
         except Exception as e:
             logger.warning("[TELEGRAM] deleteWebhook falló (no crítico): %s", e)
 
+        # Limpiar sesión de polling previa (completa cualquier long-poll pendiente)
+        logger.info("[TELEGRAM] Limpiando sesión polling previa (getUpdates)...")
+        try:
+            url = f"https://api.telegram.org/bot{self._config.telegram_token}/getUpdates?offset=-1&timeout=1"
+            with ureq.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read())
+                logger.info("[TELEGRAM] getUpdates: %d updates", len(data.get("result", [])))
+        except Exception as e:
+            logger.warning("[TELEGRAM] getUpdates falló (no crítico): %s", e)
+
         # 3. Construir Application
         logger.info("Construyendo Application...")
         self._application = self._build_application()
