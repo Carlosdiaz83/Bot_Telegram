@@ -1027,6 +1027,11 @@ class ConversationManager:
             objetivo.razon[:60],
         )
 
+        # ── Si el Director dice COTIZAR, el handler ya produjo la cotización real ──
+        if objetivo.accion == "COTIZAR":
+            context.cotizacion_realizada = True
+            return respuesta_logica
+
         # ── PromptBuilder con objetivo obligatorio ──
         try:
             from app.services.commercial_prompt_builder import CommercialPromptBuilder
