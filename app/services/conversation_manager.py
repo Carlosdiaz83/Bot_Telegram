@@ -1014,13 +1014,12 @@ class ConversationManager:
         if self.ai is None or not self.ai.disponible:
             return respuesta_logica
 
-        # ── Sincronizar estado real de la conversación en memoria ──
-        # El CM ya decidió avanzar etapas. La memoria debe reflejar el estado actual
-        # ANTES de que el Director decida, para que el Director solo haga estrategia.
+        # ── Sincronizar estado en memoria ANTES de que el Director decida ──
+        # El CM ya avanzó la etapa. Reflejar en memoria para que el Director
+        # vea el estado real y decida estrategia (nunca COTIZAR de nuevo).
         from app.services.commercial_memory import get_memory
         memory = get_memory()
         context = memory.get_or_create(lead.lead_id)
-        cotizacion_prev = context.cotizacion_realizada
         if session and session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
             context.cotizacion_realizada = True
 
@@ -1034,9 +1033,13 @@ class ConversationManager:
             objetivo.razon[:60],
         )
 
-        # ── Si el CM acaba de generar la cotización (1er vez en PRESENTANDO_VALOR),
-        #     la respuesta del handler ES la cotización real. Llega al usuario sin IA. ──
-        if not cotizacion_prev and context.cotizacion_realizada:
+        # COTIZAR (solo para stages trabados de versiones anteriores):
+        # El Director ve datos completos pero cotizacion_realizada=False
+        # porque el stage nunca avanzó a PRESENTANDO_VALOR.
+        if objetivo.accion == "COTIZAR":
+            context.cotizacion_realizada = True
+            session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+            respuesta_logica = self._handle_cotizando(session, mensaje)
             return respuesta_logica
 
         # ── PromptBuilder con objetivo obligatorio ──
