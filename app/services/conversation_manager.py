@@ -1062,18 +1062,20 @@ class ConversationManager:
             objetivo.razon[:60],
         )
 
-        # COTIZAR (solo para stages trabados de versiones anteriores):
-        # El Director ve datos completos pero cotizacion_realizada=False
-        # porque el stage nunca avanzó a PRESENTANDO_VALOR.
+        # Acciones donde la LLM interfiere con respuestas del handler:
+        #   PEDIR_DATO → el handler genera la pregunta exacta (ej: "¿De qué localidad sos?")
+        #   COTIZAR    → el handler ejecuta la cotización con los 3 planes reales
+        #   PRESENTAR_VALOR → el handler ya generó los planes (solo la 1ra vez)
+        # En todos estos casos, la respuesta del handler es la correcta.
+
+        if objetivo.accion == "PEDIR_DATO":
+            return respuesta_logica
+
         if objetivo.accion == "COTIZAR":
             context.cotizacion_realizada = True
             session.avanzar_etapa(EtapaConversacion.COTIZANDO)
-            respuesta_logica = self._handle_cotizando(session, mensaje)
-            return respuesta_logica
+            return self._handle_cotizando(session, mensaje)
 
-        # Cotización recién generada (1ra vez en PRESENTANDO_VALOR):
-        # la respuesta del handler ES la cotización real con los 3 planes.
-        # Llega al usuario sin pasar por la LLM para que no la modifique.
         if not cotizacion_prev and context.cotizacion_realizada:
             return respuesta_logica
 
