@@ -137,10 +137,19 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health():
         telegram_alive = _telegram_thread is not None and _telegram_thread.is_alive()
+        import subprocess
+        try:
+            commit = subprocess.run(
+                ["git", "log", "--oneline", "-1"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout.strip()
+        except Exception:
+            commit = "unknown"
         return JSONResponse({
             "status": "ok",
             "service": "sofia",
             "version": "1.0.0",
+            "commit": commit,
             "telegram_bot": "running" if telegram_alive else "not_started",
         })
 
