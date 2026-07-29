@@ -1014,10 +1014,17 @@ class ConversationManager:
         if self.ai is None or not self.ai.disponible:
             return respuesta_logica
 
-        # ── Director decide el objetivo ──
+        # ── Sincronizar estado real de la conversación en memoria ──
+        # El CM ya decidió avanzar etapas. La memoria debe reflejar el estado actual
+        # ANTES de que el Director decida, para que el Director solo haga estrategia.
         from app.services.commercial_memory import get_memory
         memory = get_memory()
         context = memory.get_or_create(lead.lead_id)
+        cotizacion_prev = context.cotizacion_realizada
+        if session and session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
+            context.cotizacion_realizada = True
+
+        # ── Director decide el objetivo estratégico ──
         objetivo = self._director.decidir(lead, context, interpretacion)
 
         logger.debug(
@@ -1027,9 +1034,9 @@ class ConversationManager:
             objetivo.razon[:60],
         )
 
-        # ── Si el Director dice COTIZAR, el handler ya produjo la cotización real ──
-        if objetivo.accion == "COTIZAR":
-            context.cotizacion_realizada = True
+        # ── Si el CM acaba de generar la cotización (1er vez en PRESENTANDO_VALOR),
+        #     la respuesta del handler ES la cotización real. Llega al usuario sin IA. ──
+        if not cotizacion_prev and context.cotizacion_realizada:
             return respuesta_logica
 
         # ── PromptBuilder con objetivo obligatorio ──
