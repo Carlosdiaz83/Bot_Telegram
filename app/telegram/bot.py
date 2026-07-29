@@ -109,15 +109,27 @@ class TelegramBot:
         # 1. Nuestros propios signal handlers (solo en main thread)
         self._setup_signal_handlers()
 
-        # 2. Construir Application
+        # 2. Limpiar conexión previa (evita Conflict error por instancia duplicada)
+        logger.info("[TELEGRAM] Limpiando conexión previa (deleteWebhook)...")
+        try:
+            import urllib.request as ureq
+            import json
+            url = f"https://api.telegram.org/bot{self._config.telegram_token}/deleteWebhook?drop_pending_updates=true"
+            with ureq.urlopen(url, timeout=10) as resp:
+                data = json.loads(resp.read())
+                logger.info("[TELEGRAM] deleteWebhook: %s", data.get("description", "ok"))
+        except Exception as e:
+            logger.warning("[TELEGRAM] deleteWebhook falló (no crítico): %s", e)
+
+        # 3. Construir Application
         logger.info("Construyendo Application...")
         self._application = self._build_application()
 
-        # 3. Registrar handlers
+        # 4. Registrar handlers
         logger.info("Registrando handlers...")
         self._register_handlers(self._application)
 
-        # 4. Configurar stop_signals para run_polling()
+        # 5. Configurar stop_signals para run_polling()
         # IMPORTANTE: En Linux (Render), run_polling() intenta registrar
         # signal handlers via loop.add_signal_handler(). Si estamos en un
         # thread secundario, esto lanza ValueError.
