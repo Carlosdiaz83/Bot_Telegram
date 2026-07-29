@@ -832,7 +832,7 @@ class ConversationManager:
         return f"¿{faltantes[0].capitalize()}?"
 
     def _handle_cotizando(self, session: UserSession, mensaje: str) -> str:
-        """Genera la cotización y la presenta al cliente."""
+        """Genera la cotización y presenta los 3 planes con comparativa."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.INTERESADO
 
@@ -840,39 +840,67 @@ class ConversationManager:
         if lead.localidad and "cordoba" not in lead.localidad.lower():
             zona = "interior"
 
-        nombre_plan = "medimax"
-        if lead.prioridad_cliente and lead.prioridad_cliente.value == "completo":
-            nombre_plan = "medimax gold"
-        elif lead.prioridad_cliente and lead.prioridad_cliente.value == "economico":
-            nombre_plan = "medimax co"
+        descripciones = {
+            "medimax": "Cobertura completa con consultas, estudios y odontología",
+            "medimax gold": "Cobertura premium con mayores prestaciones y mejores descuentos",
+            "medimax co": "Plan económico con las prestaciones esenciales al mejor precio",
+        }
 
         if self._calculator is None:
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
             nombre = lead.nombre or ""
-            return (
-                f"¡Perfecto {nombre}! Con los datos que me diste puedo "
-                "prepararte una propuesta. Te cuento que tenemos planes "
-                "que incluyen consultas, estudios, odontología y más. "
-                "¿Querés que te cuente los detalles?"
+            texto = f"¡Perfecto {nombre}! Tenemos 3 planes para vos:\n\n"
+            for i, plan in enumerate(["medimax", "medimax gold", "medimax co"], 1):
+                texto += f"{i}. *{plan.title()}* — {descripciones[plan]}\n"
+            texto += "\n¿Querés que te cuente más detalles de cada uno?"
+            return texto
+
+        planes = ["medimax", "medimax gold", "medimax co"]
+        resultados = []
+        for plan in planes:
+            resultado = self._calculator.cotizar(
+                lead=lead,
+                zona=zona,
+                nombre_plan=plan,
+                conceptos_obra_social=lead.conceptos_obra_social or None,
             )
-
-        resultado = self._calculator.cotizar(
-            lead=lead,
-            zona=zona,
-            nombre_plan=nombre_plan,
-            conceptos_obra_social=lead.conceptos_obra_social or None,
-        )
-
-        propuesta = self._calculator.generar_propuesta_texto(resultado)
+            if resultado and resultado.valor_plan_total > 0:
+                resultados.append(resultado)
 
         session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
 
-        logger.info(
-            "[CONVERSATION] Cotización generada — user=%s, plan=%s, a_pagar=%.2f",
-            session.telegram_id, resultado.plan, resultado.valor_a_pagar,
+        from app.services.commercial_memory import get_memory
+        memory = get_memory()
+        context = memory.get_or_create(lead.lead_id)
+        context.cotizacion_realizada = True
+
+        if not resultados:
+            nombre = lead.nombre or ""
+            return (
+                f"{nombre}, por el momento no tengo precios disponibles. "
+                "Comunicate con nosotros al 0800-xxx-xxxx y te asesoramos."
+            )
+
+        texto = "*Estos son los planes disponibles para vos:*\n\n"
+        for i, r in enumerate(resultados, 1):
+            texto += f"📋 *Plan {r.plan.title()}*\n"
+            texto += f"   {descripciones.get(r.plan, '')}\n"
+            texto += f"   💰 *${r.valor_a_pagar:,.2f}/mes*\n"
+            if r.plan_joven_disponible:
+                texto += "   🎉 Plan Joven disponible\n"
+            texto += "\n"
+
+        texto += (
+            "¿Querés que te cuente más detalles de algún plan "
+            "o te parece bien alguno para avanzar?"
         )
 
-        return propuesta
+        logger.info(
+            "[CONVERSATION] Cotización generada — user=%s, planes=%d",
+            session.telegram_id, len(resultados),
+        )
+
+        return texto
 
     def _detectar_recibo_sueldo(self, mensaje: str) -> bool:
         """Detecta si el mensaje menciona recibo de sueldo."""
@@ -1020,6 +1048,7 @@ class ConversationManager:
         from app.services.commercial_memory import get_memory
         memory = get_memory()
         context = memory.get_or_create(lead.lead_id)
+        cotizacion_prev = context.cotizacion_realizada
         if session and session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
             context.cotizacion_realizada = True
 
@@ -1040,6 +1069,12 @@ class ConversationManager:
             context.cotizacion_realizada = True
             session.avanzar_etapa(EtapaConversacion.COTIZANDO)
             respuesta_logica = self._handle_cotizando(session, mensaje)
+            return respuesta_logica
+
+        # Cotización recién generada (1ra vez en PRESENTANDO_VALOR):
+        # la respuesta del handler ES la cotización real con los 3 planes.
+        # Llega al usuario sin pasar por la LLM para que no la modifique.
+        if not cotizacion_prev and context.cotizacion_realizada:
             return respuesta_logica
 
         # ── PromptBuilder con objetivo obligatorio ──
