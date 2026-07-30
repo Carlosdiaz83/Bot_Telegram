@@ -531,3 +531,14 @@ PROHIBICIONES:
         if tipo == TipoAfiliacion.PARTICULAR:
             return "tipo → grupo familiar → edades → localidad"
         return "tipo → grupo familiar → edades → localidad"
+
+
+def has_real_plans(text: str) -> bool:
+    """Detecta si un texto contiene planes reales de SERVIRED (no texto genérico)."""
+    text_lower = text.lower()
+    keywords = ["medimax", "medimax gold", "medimax co", "plan medimax"]
+    # Busca patrones de precios: $XX.XX/mes
+    import re
+    has_price = bool(re.search(r"\$\s*[\d,]+\.?\d*\s*/mes", text))
+    has_plan_name = any(kw in text_lower for kw in keywords)
+    return has_price and has_plan_name

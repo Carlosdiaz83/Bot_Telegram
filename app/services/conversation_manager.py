@@ -1065,17 +1065,23 @@ class ConversationManager:
         # Acciones donde la LLM interfiere con respuestas del handler:
         #   PEDIR_DATO → el handler genera la pregunta exacta (ej: "¿De qué localidad sos?")
         #   COTIZAR    → el handler ejecuta la cotización con los 3 planes reales
-        #   PRESENTAR_VALOR → el handler ya generó los planes (solo la 1ra vez)
+        #   PRESENTAR_VALOR → si la respuesta del handler no contiene planes
+        #                     reales (sesión corrupta), forzar recálculo
         # En todos estos casos, la respuesta del handler es la correcta.
 
-        if objetivo.accion == "PEDIR_DATO":
+        if objetivo.accion in ("PEDIR_DATO", "COTIZAR", "PRESENTAR_VALOR"):
+            if objetivo.accion == "COTIZAR":
+                context.cotizacion_realizada = True
+                session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+                return self._handle_cotizando(session, mensaje)
+            if objetivo.accion == "PRESENTAR_VALOR":
+                from app.services.commercial_prompt_builder import has_real_plans
+                if not has_real_plans(respuesta_logica):
+                    session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+                    return self._handle_cotizando(session, mensaje)
             return respuesta_logica
 
-        if objetivo.accion == "COTIZAR":
-            context.cotizacion_realizada = True
-            session.avanzar_etapa(EtapaConversacion.COTIZANDO)
-            return self._handle_cotizando(session, mensaje)
-
+        # Fallback por si el Director nunca detectó la transición
         if not cotizacion_prev and context.cotizacion_realizada:
             return respuesta_logica
 
