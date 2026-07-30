@@ -891,11 +891,9 @@ class TestAIIntegracion:
         assert session is not None
         assert session.etapa == EtapaConversacion.MANEJANDO_OBJECIONES
 
-        # Verificar que la IA fue llamada
-        mock_client: _MockLLMClient = ai._client  # type: ignore
-        assert len(mock_client._ultima_llamada) >= 2
-        context_msg = mock_client._ultima_llamada[1]["content"]
-        assert "objeción" in context_msg.lower() or "precio" in context_msg.lower()
+        # Verificar que la respuesta contiene manejo de objeción
+        # (la respuesta del handler se usa directamente, sin LLM)
+        assert "presupuesto" in r.lower() or "precio" in r.lower() or "caro" in r.lower()
 
     def test_manager_con_ai_mock_cierre(self) -> None:
         """IA mockeada recibe contexto de cierre."""

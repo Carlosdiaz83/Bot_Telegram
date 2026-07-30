@@ -1062,28 +1062,34 @@ class ConversationManager:
             objetivo.razon[:60],
         )
 
-        # Acciones donde la LLM interfiere con respuestas del handler:
-        #   PEDIR_DATO → el handler genera la pregunta exacta (ej: "¿De qué localidad sos?")
-        #   COTIZAR    → el handler ejecuta la cotización con los 3 planes reales
-        #   PRESENTAR_VALOR → si la respuesta del handler no contiene planes
-        #                     reales (sesión corrupta), forzar recálculo
-        # En todos estos casos, la respuesta del handler es la correcta.
+        # TODAS las acciones del Director devuelven la respuesta del handler
+        # directamente. El LLM NUNCA mejora respuestas comerciales porque:
+        #   - El identity prompt incluye "Perfecto, voy a calcular cuánto pagarías"
+        #     (commercial_prompt_builder.py:168) → la LLM repite esa frase
+        #   - El Orchestrator llama al LLM ANTES que el Director → memory se
+        #     corrompe si el LLM devuelve `accion=COTIZAR`
+        #   - Las sesiones corruptas (cotizacion_realizada=True sin planes)
+        #     caían al LLM y generaban "Voy a calcular..."
+        #
+        # Excepciones controladas (ejecutan handler específico):
+        #   COTIZAR → _handle_cotizando() genera los 3 planes reales
+        #   PRESENTAR_VALOR → si respuesta_logica no tiene planes, forzar recálculo
 
-        if objetivo.accion in ("PEDIR_DATO", "COTIZAR", "PRESENTAR_VALOR"):
-            if objetivo.accion == "COTIZAR":
-                context.cotizacion_realizada = True
-                session.avanzar_etapa(EtapaConversacion.COTIZANDO)
-                return self._handle_cotizando(session, mensaje)
-            if objetivo.accion == "PRESENTAR_VALOR":
-                from app.services.commercial_prompt_builder import has_real_plans
+        if objetivo.accion == "COTIZAR":
+            context.cotizacion_realizada = True
+            session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+            return self._handle_cotizando(session, mensaje)
+
+        if objetivo.accion == "PRESENTAR_VALOR":
+            # Solo forzar recálculo si el handler NO avanzó la etapa
+            # (ej: _handle_valor() pudo haber avanzado a MANEJANDO_OBJECIONES)
+            from app.services.commercial_prompt_builder import has_real_plans
+            if session.etapa == EtapaConversacion.PRESENTANDO_VALOR:
                 if not has_real_plans(respuesta_logica):
                     session.avanzar_etapa(EtapaConversacion.COTIZANDO)
                     return self._handle_cotizando(session, mensaje)
-            return respuesta_logica
 
-        # Fallback por si el Director nunca detectó la transición
-        if not cotizacion_prev and context.cotizacion_realizada:
-            return respuesta_logica
+        return respuesta_logica
 
         # ── PromptBuilder con objetivo obligatorio ──
         try:
