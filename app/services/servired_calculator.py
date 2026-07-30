@@ -255,9 +255,10 @@ class ServiredCalculator:
         if self._price_repo is None:
             return None
 
+        plan_normalizado = nombre_plan.lower().strip().replace(" ", "_")
         precio_db = self._price_repo.buscar_precio(
             tipo_afiliacion=tipo_afiliacion,
-            plan=nombre_plan,
+            plan=plan_normalizado,
             zona=zona,
             edad=edad,
         )
