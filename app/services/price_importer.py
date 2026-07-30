@@ -252,6 +252,33 @@ def _normalizar_plan(nombre: str) -> str:
     return _PLAN_MAP.get(nombre_limpio, nombre_limpio)
 
 
+def _parsear_edad(label: str) -> tuple[int, int]:
+    """
+    Parsea etiqueta de edad/familiar a rango (edad_desde, edad_hasta).
+
+    Ejemplos:
+        "TITULAR / HASTA 44 AÑOS"  → (0, 44)
+        "TITULAR HASTA 44 AÑOS"    → (0, 44)
+        "HIJO"                     → (0, 99)
+        "45 A 50 AÑOS"             → (45, 50)
+        "51 a 60 AÑOS"             → (51, 60)
+        "JOVEN MEDIMAX"            → (0, 30)
+        "GOLD JOVEN"               → (0, 30)
+    """
+    label_lower = label.lower().strip()
+    if "joven" in label_lower:
+        return (0, 30)
+    if "hijo" in label_lower:
+        return (0, 99)
+    m = re.search(r'hasta\s+(\d+)\s*a[ñn]os', label_lower)
+    if m:
+        return (0, int(m.group(1)))
+    m = re.search(r'(\d+)\s*(?:a\s*)\s*(\d+)\s*a[ñn]os', label_lower)
+    if m:
+        return (int(m.group(1)), int(m.group(2)))
+    return (0, 99)
+
+
 def _parsear_precio(valor: Any) -> float:
     """
     Parsea un valor a precio float.
@@ -361,73 +388,112 @@ def importar_precios(
             )
             continue
 
-        # Parsear header
-        header = [str(c).strip() if c else "" for c in filas[0]]
-        idx_plan = _buscar_columna_plan(header)
+        # Detectar filas header: primera columna contiene "plan" y alguna otra columna tiene zona
+        # Soporta archivos con filas vacías iniciales y múltiples secciones header+data
+        cabeceras: list[int] = []
+        for i, fila in enumerate(filas):
+            if not fila or not any(fila):
+                continue
+            col0 = str(fila[0]).strip().lower() if fila[0] else ""
+            if "plan" not in col0:
+                continue
+            tiene_zona = False
+            for val in fila[1:]:
+                v = str(val).strip().lower() if val else ""
+                if any(kw in v for kw in ("cordoba", "córdoba", "cba", "interior")):
+                    tiene_zona = True
+                    break
+            if tiene_zona:
+                cabeceras.append(i)
 
-        if idx_plan == -1:
+        if not cabeceras:
             logger.warning(
-                "[IMPORT] No se encontró columna de plan en hoja '%s'",
-                nombre_hoja,
-            )
-            continue
-
-        columnas_precio = _mapear_columnas_precio(header, idx_plan)
-        if not columnas_precio:
-            logger.warning(
-                "[IMPORT] No se encontraron columnas de precio en hoja '%s'",
+                "[IMPORT] No se encontró fila header con columna de plan "
+                "y zona en hoja '%s'",
                 nombre_hoja,
             )
             continue
 
         resultado.hojas_procesadas += 1
 
-        # Procesar filas de datos
-        for fila_idx, fila in enumerate(filas[1:], start=2):
-            if not fila or not any(fila):
+        # Procesar cada bloque header+data
+        for h_idx in cabeceras:
+            fila_header = filas[h_idx]
+            header = [str(c).strip() if c else "" for c in fila_header]
+            idx_plan = _buscar_columna_plan(header)
+            if idx_plan == -1:
                 continue
 
-            plan_nombre = str(fila[idx_plan]).strip() if fila[idx_plan] else ""
-            if not plan_nombre or plan_nombre.lower() in ("plan", "planes", ""):
+            columnas_precio = _mapear_columnas_precio(header, idx_plan)
+            if not columnas_precio:
                 continue
 
-            plan_normalizado = _normalizar_plan(plan_nombre)
+            # El header puede tener el plan en col0 ("PLAN CO MEDIMAX") o ser etiqueta ("Plan")
+            header_plan_raw = str(fila_header[idx_plan]).strip() if fila_header[idx_plan] else ""
+            header_plan_normalizado = _normalizar_plan(header_plan_raw)
+            es_columna_etiqueta = header_plan_normalizado in ("plan", "planes")
 
-            for col_info in columnas_precio:
-                valor = fila[col_info["idx"]]
-                if valor is None or valor == "":
+            # Rango de datos: desde h_idx+1 hasta la próxima cabecera (o fin de hoja)
+            prox_cabecera = len(filas)
+            for c in cabeceras:
+                if c > h_idx:
+                    prox_cabecera = c
+                    break
+
+            for fila_idx in range(h_idx + 1, prox_cabecera):
+                fila = filas[fila_idx]
+                if not fila or not any(fila):
                     continue
 
-                precio = _parsear_precio(valor)
-                if precio <= 0:
+                col0_etiqueta = str(fila[idx_plan]).strip() if fila[idx_plan] else ""
+                if not col0_etiqueta or col0_etiqueta.startswith("*"):
                     continue
 
-                try:
-                    accion, _registro = repo.upsert(
-                        tipo_afiliacion=tipo_afiliacion,
-                        plan=plan_normalizado,
-                        zona=col_info["zona"],
-                        precio=precio,
-                        edad_desde=col_info.get("edad_desde", 0),
-                        edad_hasta=col_info.get("edad_hasta", 99),
-                        fuente=nombre_fuente,
-                    )
-                    resultado.precios_totales += 1
+                if es_columna_etiqueta:
+                    # Formato tabla plana: fila[0] = nombre del plan
+                    plan_normalizado = _normalizar_plan(col0_etiqueta)
+                    edad_desde = 0
+                    edad_hasta = 99
+                else:
+                    # Formato seccionado: header tiene el plan, fila[0] = edad/familiar
+                    plan_normalizado = header_plan_normalizado
+                    edad_desde, edad_hasta = _parsear_edad(col0_etiqueta)
 
-                    if accion == "created":
-                        resultado.precios_creados += 1
-                    elif accion == "updated":
-                        resultado.precios_actualizados += 1
-                    else:
-                        resultado.precios_sin_cambio += 1
+                for col_info in columnas_precio:
+                    valor = fila[col_info["idx"]]
+                    if valor is None or valor == "":
+                        continue
 
-                except Exception as exc:
-                    msg = (
-                        f"Fila {fila_idx}, hoja '{nombre_hoja}', "
-                        f"plan '{plan_normalizado}': {exc}"
-                    )
-                    resultado.errores.append(msg)
-                    logger.error("[IMPORT] %s", msg)
+                    precio = _parsear_precio(valor)
+                    if precio <= 0:
+                        continue
+
+                    try:
+                        accion, _registro = repo.upsert(
+                            tipo_afiliacion=tipo_afiliacion,
+                            plan=plan_normalizado,
+                            zona=col_info["zona"],
+                            precio=precio,
+                            edad_desde=edad_desde,
+                            edad_hasta=edad_hasta,
+                            fuente=nombre_fuente,
+                        )
+                        resultado.precios_totales += 1
+
+                        if accion == "created":
+                            resultado.precios_creados += 1
+                        elif accion == "updated":
+                            resultado.precios_actualizados += 1
+                        else:
+                            resultado.precios_sin_cambio += 1
+
+                    except Exception as exc:
+                        msg = (
+                            f"Fila {fila_idx+1}, hoja '{nombre_hoja}', "
+                            f"plan '{plan_normalizado}': {exc}"
+                        )
+                        resultado.errores.append(msg)
+                        logger.error("[IMPORT] %s", msg)
 
         logger.info(
             "[IMPORT] Hoja '%s' (%s): procesada",
