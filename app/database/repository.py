@@ -725,9 +725,13 @@ class PriceRepository:
                 ServiredPriceDB.edad_desde <= edad,
                 ServiredPriceDB.edad_hasta >= edad,
             )
+            stmt = stmt.order_by(
+                (ServiredPriceDB.edad_hasta - ServiredPriceDB.edad_desde).asc()
+            )
+        else:
+            stmt = stmt.order_by(ServiredPriceDB.edad_desde)
 
-        stmt = stmt.order_by(ServiredPriceDB.edad_desde)
-        result = self._db.execute(stmt).scalar_one_or_none()
+        result = self._db.execute(stmt).scalars().first()
 
         logger.debug(
             "[PRICE_REPO] Buscado: tipo=%s, plan=%s, zona=%s, edad=%s -> %s",
