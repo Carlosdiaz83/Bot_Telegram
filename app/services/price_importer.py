@@ -65,6 +65,14 @@ _PLAN_MAP: dict[str, str] = {
     "gold": "gold",
     "plan_joven": "plan_joven",
     "joven": "plan_joven",
+    # Variantes con prefijo "plan_" (del Excel)
+    "plan_co_medimax": "medimax_co",
+    "plan_medimax": "medimax",
+    "plan_medimax_gold": "medimax_gold",
+    "plan_gold": "gold",
+    "plan_co_salud": "medimax_co",  # "CO SALUD" = "CO MEDIMAX" para particulares
+    "plan_salud": "medimax",
+    "plan_salud_gold": "medimax_gold",
 }
 
 
@@ -214,7 +222,7 @@ def _mapear_columnas_precio(
         }
 
         # Detectar zona
-        if "cordoba" in col_str or "córdoba" in col_str:
+        if "cordoba" in col_str or "córdoba" in col_str or "cba" in col_str:
             info["zona"] = "cordoba"
         elif "interior" in col_str:
             info["zona"] = "interior"

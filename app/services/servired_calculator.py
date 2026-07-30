@@ -256,20 +256,25 @@ class ServiredCalculator:
             return None
 
         plan_normalizado = nombre_plan.lower().strip().replace(" ", "_")
-        precio_db = self._price_repo.buscar_precio(
-            tipo_afiliacion=tipo_afiliacion,
-            plan=plan_normalizado,
-            zona=zona,
-            edad=edad,
-        )
+        planes_a_probar = [plan_normalizado]
+        if not plan_normalizado.startswith("plan_"):
+            planes_a_probar.append(f"plan_{plan_normalizado}")
 
-        if precio_db:
-            logger.debug(
-                "[CALCULATOR] Precio desde tabla: tipo=%s, plan=%s, zona=%s, "
-                "edad=%s -> $%.2f",
-                tipo_afiliacion, nombre_plan, zona, edad, precio_db.precio,
+        for plan_intento in planes_a_probar:
+            precio_db = self._price_repo.buscar_precio(
+                tipo_afiliacion=tipo_afiliacion,
+                plan=plan_intento,
+                zona=zona,
+                edad=edad,
             )
-            return precio_db.precio
+            if precio_db:
+                logger.debug(
+                    "[CALCULATOR] Precio desde tabla: tipo=%s, "
+                    "plan_intento=%s, zona=%s, edad=%s -> $%.2f",
+                    tipo_afiliacion, plan_intento, zona, edad,
+                    precio_db.precio,
+                )
+                return precio_db.precio
 
         return None
 
