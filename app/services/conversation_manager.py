@@ -89,7 +89,12 @@ class ConversationManager:
             # KnowledgeEngine usa la DB para retrieval de conocimiento
             db_session = self._db_factory()
             self._knowledge_engine = KnowledgeEngine(db_session)
-            self._calculator = ServiredCalculator(db_session)
+            from app.database.repository import AportesMonotributoRepository, PriceRepository
+            self._calculator = ServiredCalculator(
+                db_session,
+                price_repository=PriceRepository(db_session),
+                aportes_monotributo_repository=AportesMonotributoRepository(db_session),
+            )
             logger.info("[DATABASE] ConversationManager con DB habilitada + KnowledgeEngine + Calculator")
         else:
             self._db_factory = None
