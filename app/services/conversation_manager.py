@@ -282,13 +282,24 @@ class ConversationManager:
                 session, mensaje, interpretacion=resultado,
             )
 
-        # ── Etapas sin handler (CALIFICADO, DERIVADO) → orchestrator response ──
+        # ── Etapas sin handler (CALIFICADO, DERIVADO) → redirect según datos ──
         logger.info(
-            "[ORCHESTRATOR] user=%s, etapa=%s → usando respuesta orchestrator",
+            "[DIRECTOR] user=%s, etapa=%s → sin handler, redirigiendo según datos",
             session.telegram_id, session.etapa.value,
         )
         session._handler_ejecutado = "orchestrator_fallback"
-        return resultado.respuesta
+        faltantes = self._datos_faltantes_para_cotizar(session.lead)
+        if session.lead.tipo_afiliacion and not faltantes:
+            session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+            return self._handle_cotizando(session, mensaje)
+        if session.lead.tipo_afiliacion:
+            session.avanzar_etapa(EtapaConversacion.ESPERANDO_DATOS)
+            return self._handle_esperando_datos(session, mensaje)
+        if session.lead.nombre:
+            session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
+            return self._handle_calificacion(session, mensaje)
+        session.avanzar_etapa(EtapaConversacion.NUEVO)
+        return self._handle_nuevo(session, mensaje)
 
     # ─────────────────────────────────────────
     # Helpers del Orchestrator
@@ -529,10 +540,24 @@ class ConversationManager:
                 session, mensaje, interpretacion=resultado,
             )
 
-        return (
-            f"{session.lead.nombre or 'Hola'}, "
-            "¿en qué puedo ayudarte?"
+        # ── Etapas sin handler (CALIFICADO, DERIVADO) → redirect según datos ──
+        logger.info(
+            "[DIRECTOR] user=%s, etapa=%s → sin handler (directo), "
+            "redirigiendo según datos",
+            session.telegram_id, session.etapa.value,
         )
+        faltantes = self._datos_faltantes_para_cotizar(session.lead)
+        if session.lead.tipo_afiliacion and not faltantes:
+            session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+            return self._handle_cotizando(session, mensaje)
+        if session.lead.tipo_afiliacion:
+            session.avanzar_etapa(EtapaConversacion.ESPERANDO_DATOS)
+            return self._handle_esperando_datos(session, mensaje)
+        if session.lead.nombre:
+            session.avanzar_etapa(EtapaConversacion.CALIFICANDO)
+            return self._handle_calificacion(session, mensaje)
+        session.avanzar_etapa(EtapaConversacion.NUEVO)
+        return self._handle_nuevo(session, mensaje)
 
     def _handle_descubrimiento(self, session: UserSession, mensaje: str) -> str:
         """Maneja la etapa de descubrimiento de necesidad — sin intención comercial."""
