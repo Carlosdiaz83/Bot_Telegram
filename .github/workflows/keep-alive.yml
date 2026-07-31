@@ -10,12 +10,18 @@ jobs:
     name: Ping Render /health
     runs-on: ubuntu-latest
     steps:
-      - name: Llamar al health check
+      - name: Llamar al health check (con reintentos por wake-up en frio)
         run: |
           URL="https://bot-telegram-s6tg.onrender.com/health"
-          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
-          echo "health endpoint -> HTTP $CODE"
-          if [ "$CODE" != "200" ]; then
-            echo "::error::Render health check fallo con HTTP $CODE"
-            exit 1
-          fi
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 "$URL" || echo "000")
+            echo "intento $i -> HTTP $CODE"
+            if [ "$CODE" = "200" ]; then
+              echo "OK: servicio activo"
+              exit 0
+            fi
+            # Render free tier puede tardar ~30-60s en despertar el servicio
+            sleep 30
+          done
+          echo "::error::Render health check fallo en 5 intentos (ultimo HTTP $CODE)"
+          exit 1
