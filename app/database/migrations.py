@@ -94,9 +94,12 @@ if __name__ == "__main__":
     )
 
     try:
-        from app.database.database import get_engine
+        from app.database.database import get_engine, crear_tablas
         database_url = os.environ.get("DATABASE_URL")
         engine = get_engine(database_url)
+        # Importante: crear tablas ANTES de migrar. En una DB nueva
+        # (primer deploy en Render) las tablas no existen y el ALTER falla.
+        crear_tablas(engine)
         ejecutar_migraciones(engine)
         print("Migraciones completadas.")
     except Exception as e:
