@@ -75,11 +75,24 @@ async def lifespan(app: FastAPI):
 
     # Iniciar DB + migraciones
     logger.info("Inicializando base de datos...")
-    from app.database.database import get_engine, crear_tablas
+    from app.database.database import get_engine, crear_tablas, get_session_factory
     from app.database.migrations import ejecutar_migraciones
+    from app.database.bootstrap import bootstrap_datos
     engine = get_engine(_config.database_url)
     crear_tablas(engine)
     ejecutar_migraciones(engine)
+
+    # Verificar datos esenciales (precios, aportes, knowledge)
+    logger.info("Verificando datos iniciales en la base de datos...")
+    session_factory = get_session_factory(engine)
+    db = session_factory()
+    try:
+        bootstrap_datos(db)
+    except Exception as exc:
+        logger.error("[BOOTSTRAP] Error durante verificación de datos: %s", exc)
+    finally:
+        db.close()
+
     logger.info("Base de datos lista")
 
     # Iniciar Telegram bot en hilo daemon
