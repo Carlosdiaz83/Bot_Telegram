@@ -536,7 +536,10 @@ PROHIBICIONES:
 def has_real_plans(text: str) -> bool:
     """Detecta si un texto contiene planes reales de SERVIRED (no texto genérico)."""
     text_lower = text.lower()
-    keywords = ["medimax", "medimax gold", "medimax co", "plan medimax"]
+    keywords = [
+        "medimax", "medimax gold", "medimax co", "plan medimax",
+        "plan gold", "tope de gama",
+    ]
     # Busca patrones de precios: $XX.XX/mes
     import re
     has_price = bool(re.search(r"\$\s*[\d,]+\.?\d*\s*/mes", text))

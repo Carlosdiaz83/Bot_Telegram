@@ -370,3 +370,52 @@ class TestValorSinPasivo:
         respuesta = manager._handle_valor(session, "genial")
         assert session.etapa == EtapaConversacion.PRESENTANDO_VALOR
         assert len(respuesta) > 10
+
+
+# ─────────────────────────────────────────
+# Tests: Detección de plan específico
+# ─────────────────────────────────────────
+
+class TestDetectarPlanEspecifico:
+    """Verifica que el bot identifica el plan que menciona el cliente."""
+
+    def test_detecta_plan_gold_tope_gama(self, manager):
+        """'gold' a secas = plan Gold tope de gama (NO medimax gold)."""
+        assert manager._detectar_plan_mencionado("Hay tambien un plan gold?") == "gold"
+
+    def test_detecta_medimax_gold(self, manager):
+        """'medimax gold' = plan Medimax Gold (con prefijo medimax)."""
+        assert manager._detectar_plan_mencionado("y el medimax gold?") == "medimax_gold"
+
+    def test_detecta_medimax_co(self, manager):
+        assert manager._detectar_plan_mencionado("que precio tiene el medimax co?") == "medimax_co"
+
+    def test_detecta_medimax(self, manager):
+        assert manager._detectar_plan_mencionado("cuanto sale el medimax?") == "medimax"
+
+    def test_detecta_tope_de_gama(self, manager):
+        assert manager._detectar_plan_mencionado("cual es el tope de gama?") == "gold"
+
+    def test_no_detecta_plan(self, manager):
+        assert manager._detectar_plan_mencionado("dale, avanzamos") is None
+
+    def test_valor_responde_con_plan_gold(self, manager):
+        """Preguntar por gold durante PRESENTANDO_VALOR responde ese plan."""
+        session = manager.session_manager.get_or_create(9040)
+        session.lead.nombre = "Carlos"
+        session.lead.estado_comercial = EstadoComercial.INTERESADO
+        session.etapa = EtapaConversacion.PRESENTANDO_VALOR
+
+        respuesta = manager._handle_valor(session, "Hay tambien un plan gold?")
+        assert "gold" in respuesta.lower()
+        assert session.etapa == EtapaConversacion.PRESENTANDO_VALOR
+
+    def test_valor_responde_con_medimax_gold(self, manager):
+        session = manager.session_manager.get_or_create(9041)
+        session.lead.nombre = "Carlos"
+        session.lead.estado_comercial = EstadoComercial.INTERESADO
+        session.etapa = EtapaConversacion.PRESENTANDO_VALOR
+
+        respuesta = manager._handle_valor(session, "que onda el medimax gold?")
+        assert "medimax gold" in respuesta.lower()
+        assert session.etapa == EtapaConversacion.PRESENTANDO_VALOR

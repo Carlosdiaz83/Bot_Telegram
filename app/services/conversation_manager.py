@@ -669,6 +669,11 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.MANEJANDO_OBJECIONES)
             return objecion.respuesta or ""
 
+        # Cliente pregunta por un plan específico → cotizar y presentar ese plan
+        plan_preguntado = self._detectar_plan_mencionado(mensaje)
+        if plan_preguntado:
+            return self._cotizar_plan_especifico(session, plan_preguntado)
+
         # Cliente dice "sí/dale/ok" → intentar cierre
         if any(p in mensaje.lower() for p in [
             "sí", "si", "dale", "avanzamos", "ok", "quiero",
@@ -928,6 +933,97 @@ class ConversationManager:
         logger.info(
             "[CONVERSATION] Cotización generada — user=%s, planes=%d",
             session.telegram_id, len(resultados),
+        )
+
+        return texto
+
+    def _detectar_plan_mencionado(self, mensaje: str) -> str | None:
+        """
+        Detecta qué plan de SERVIRED menciona el mensaje del cliente.
+
+        Retorna el nombre normalizado del plan (clave de DB), o None si
+        no menciona ningún plan específico.
+
+        Orden de detección importante: "medimax gold" DEBE evaluarse
+        antes que "gold", porque "medimax gold" contiene "gold".
+        """
+        import re
+
+        texto = mensaje.lower()
+        texto = re.sub(r"medimax\s+gold", "MEDIMAX_GOLD", texto)
+        texto = re.sub(r"medimax\s+co", "MEDIMAX_CO", texto)
+
+        if "MEDIMAX_GOLD" in texto:
+            return "medimax_gold"
+        if "MEDIMAX_CO" in texto:
+            return "medimax_co"
+        if "gold" in texto or "tope de gama" in texto:
+            return "gold"
+        if "medimax" in texto:
+            return "medimax"
+        return None
+
+    def _cotizar_plan_especifico(self, session: UserSession, plan: str) -> str:
+        """
+        Cotiza y presenta un único plan que el cliente preguntó.
+
+        Se usa cuando el cliente pregunta por un plan en particular
+        (ej: "¿hay también un plan gold?") durante PRESENTANDO_VALOR.
+        """
+        lead = session.lead
+
+        zona = "cordoba"
+        if lead.localidad and "cordoba" not in lead.localidad.lower():
+            zona = "interior"
+
+        descripciones = {
+            "medimax": "Cobertura completa con consultas, estudios y odontología",
+            "medimax_gold": "Cobertura premium con mayores prestaciones y mejores descuentos",
+            "medimax_co": "Plan económico con las prestaciones esenciales al mejor precio",
+            "gold": "Tope de gama con la máxima cobertura y sin coseguros",
+        }
+
+        nombre_mostrar = {
+            "medimax": "Medimax",
+            "medimax_gold": "Medimax Gold",
+            "medimax_co": "Medimax Co",
+            "gold": "Gold",
+        }.get(plan, plan.replace("_", " ").title())
+
+        if self._calculator is None:
+            return (
+                f"El *{nombre_mostrar}* es nuestro plan tope de gama. "
+                "¿Querés que te cuente más detalles?"
+            )
+
+        resultado = self._calculator.cotizar(
+            lead=lead,
+            zona=zona,
+            nombre_plan=plan,
+            conceptos_obra_social=lead.conceptos_obra_social or None,
+        )
+
+        if not resultado or resultado.valor_plan_total <= 0:
+            nombre = lead.nombre or ""
+            return (
+                f"{nombre}, por el momento no tengo el precio del plan "
+                f"{nombre_mostrar} disponible. "
+                "Comunicate con nosotros al 0800-xxx-xxxx y te asesoramos."
+            )
+
+        texto = f"*Plan {nombre_mostrar}*\n"
+        texto += f"   {descripciones.get(plan, '')}\n"
+        texto += f"   💰 *${resultado.valor_a_pagar:,.2f}/mes*\n"
+        if resultado.plan_joven_disponible:
+            texto += "   🎉 Plan Joven disponible\n"
+        texto += (
+            "\n¿Querés que te cuente más detalles de este plan "
+            "o te parece bien para avanzar?"
+        )
+
+        logger.info(
+            "[CONVERSATION] Plan específico cotizado — user=%s, plan=%s",
+            session.telegram_id, plan,
         )
 
         return texto
