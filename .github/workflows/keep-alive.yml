@@ -1,0 +1,21 @@
+name: keep-alive
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Render /health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Llamar al health check
+        run: |
+          URL="https://bot-telegram-s6tg.onrender.com/health"
+          CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 "$URL" || echo "000")
+          echo "health endpoint -> HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            echo "::error::Render health check fallo con HTTP $CODE"
+            exit 1
+          fi

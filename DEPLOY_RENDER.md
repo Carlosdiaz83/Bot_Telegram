@@ -80,10 +80,10 @@ Render
 ## Paso 5: Verificar el deploy
 
 1. Esperar a que el build termine (~2-3 minutos)
-2. Render asigna una URL: `https://sofia-comercial.onrender.com`
+2. Render asigna una URL: `https://bot-telegram-s6tg.onrender.com`
 3. Probar:
-   - `https://sofia-comercial.onrender.com/health` → `{"status": "ok", "service": "sofia"}`
-   - `https://sofia-comercial.onrender.com/` → Panel web
+   - `https://bot-telegram-s6tg.onrender.com/health` → `{"status": "ok", "service": "sofia"}`
+   - `https://bot-telegram-s6tg.onrender.com/` → Panel web
 4. Enviar `/start` al bot en Telegram
 
 ## Paso 6: Configurar el bot en Telegram
@@ -122,12 +122,14 @@ Render
 ### Render free tier: servicio se duerme
 
 El free tier de Render apaga servicios después de 15 min sin tráfico. Soluciones:
-1. Usar un servicio externo que haga ping cada 10 min
-2. Upgrade a un plan pago
-3. Configurar un cron job externo:
+1. **GitHub Actions (ya configurado)**: el workflow `.github/workflows/keep-alive.yml`
+   hace ping al `/health` cada 10 minutos automáticamente.
+2. Usar un servicio externo que haga ping cada 10 min (ej: UptimeRobot)
+3. Upgrade a un plan pago
+4. Configurar un cron job externo:
 ```bash
 # Ping cada 10 minutos
-curl https://sofia-comercial.onrender.com/health
+curl https://bot-telegram-s6tg.onrender.com/health
 ```
 
 ## Variables de entorno completas
