@@ -183,11 +183,30 @@ def create_app() -> FastAPI:
             data_state = None
 
         knowledge_dir = None
+        knowledge_state = None
         try:
             from app.database.bootstrap import KNOWLEDGE_DIR
             knowledge_dir = str(KNOWLEDGE_DIR.resolve())
+            knowledge_state = {
+                "exists": KNOWLEDGE_DIR.is_dir(),
+                "archivos": sorted(
+                    str(p.relative_to(KNOWLEDGE_DIR))
+                    for p in KNOWLEDGE_DIR.rglob("*") if p.is_file()
+                ) if KNOWLEDGE_DIR.is_dir() else [],
+            }
         except Exception:
             pass
+
+        engine_url = None
+        try:
+            from app.database.database import get_engine
+            raw = str(get_engine().url)
+            if "@" in raw:
+                engine_url = raw.split("@")[0].split("://")[0] + "://***@" + raw.split("@")[-1]
+            else:
+                engine_url = raw
+        except Exception:
+            engine_url = None
 
         return JSONResponse({
             "status": "ok",
@@ -197,7 +216,25 @@ def create_app() -> FastAPI:
             "telegram_bot": "running" if telegram_alive else "not_started",
             "data": data_state,
             "knowledge_dir": knowledge_dir,
+            "knowledge_state": knowledge_state,
+            "engine_url": engine_url,
         })
+
+    # Bootstrap manual: fuerza la importación de datos
+    @app.get("/bootstrap")
+    async def bootstrap():
+        from app.database.database import get_engine, get_session_factory
+        engine = get_engine()
+        factory = get_session_factory(engine)
+        db = factory()
+        try:
+            from app.database.bootstrap import bootstrap_datos
+            estado = bootstrap_datos(db)
+            return JSONResponse({"status": "ok", "data": estado})
+        except Exception as exc:
+            return JSONResponse({"status": "error", "error": str(exc)}, status_code=500)
+        finally:
+            db.close()
 
     # Panel web (rutas existentes)
     try:
