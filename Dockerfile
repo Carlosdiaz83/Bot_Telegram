@@ -27,6 +27,7 @@ RUN mkdir -p /app/data /app/logs
 
 COPY app/ ./app/
 COPY pyproject.toml .
+COPY servired_knowledge/ ./servired_knowledge/
 
 ENV APP_ENV=production \
     APP_DEBUG=false \
