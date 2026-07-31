@@ -168,7 +168,7 @@ def create_app() -> FastAPI:
             db = factory()
             try:
                 counts = {}
-                for tabla in ("servired_prices", "servired_aportes_monotributo", "servired_knowledge"):
+                for tabla in ("servired_prices", "servired_aportes_monotributo", "servired_knowledge", "leads"):
                     try:
                         with engine.connect() as conn:
                             counts[tabla] = conn.execute(
@@ -182,6 +182,13 @@ def create_app() -> FastAPI:
         except Exception:
             data_state = None
 
+        knowledge_dir = None
+        try:
+            from app.database.bootstrap import KNOWLEDGE_DIR
+            knowledge_dir = str(KNOWLEDGE_DIR.resolve())
+        except Exception:
+            pass
+
         return JSONResponse({
             "status": "ok",
             "service": "sofia",
@@ -189,6 +196,7 @@ def create_app() -> FastAPI:
             "commit": commit,
             "telegram_bot": "running" if telegram_alive else "not_started",
             "data": data_state,
+            "knowledge_dir": knowledge_dir,
         })
 
     # Panel web (rutas existentes)
