@@ -343,7 +343,7 @@ class TestHandlerAdaptador:
     def test_handler_no_importa_servicios_comerciales(self):
         """El handler no importa servicios de negocio directamente."""
         import app.telegram.handlers as h
-        source = open(h.__file__).read()
+        source = open(h.__file__, encoding="utf-8").read()
         assert "LeadQualifierService" not in source
         assert "KnowledgeService" not in source
         assert "generar_argumento" not in source
@@ -352,14 +352,14 @@ class TestHandlerAdaptador:
     def test_handler_delega_a_manager(self):
         """El handler solo llama a manager.procesar_mensaje()."""
         import app.telegram.handlers as h
-        source = open(h.__file__).read()
+        source = open(h.__file__, encoding="utf-8").read()
         assert "procesar_mensaje" in source
         assert "get_manager()" in source
 
     def test_handler_log_estructurado(self):
         """El handler usa logs con tags [TELEGRAM]."""
         import app.telegram.handlers as h
-        source = open(h.__file__).read()
+        source = open(h.__file__, encoding="utf-8").read()
         assert "[TELEGRAM]" in source
         assert "[CONVERSATION]" in source
 
@@ -530,7 +530,7 @@ class TestLogsComerciales:
     def test_conversation_manager_tiene_logsestructurados(self):
         """ConversationManager tiene logs con tags comerciales."""
         import app.services.conversation_manager as cm
-        source = open(cm.__file__).read()
+        source = open(cm.__file__, encoding="utf-8").read()
         assert "[LEAD]" in source
         assert "[CONVERSATION]" in source
         assert "[SALES]" in source

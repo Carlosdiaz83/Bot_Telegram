@@ -419,3 +419,71 @@ class TestDetectarPlanEspecifico:
         respuesta = manager._handle_valor(session, "que onda el medimax gold?")
         assert "medimax gold" in respuesta.lower()
         assert session.etapa == EtapaConversacion.PRESENTANDO_VALOR
+
+    def test_normalizar_localidad_con_acento(self, manager):
+        """'Córdoba' (con tilde) se normaliza a 'cordoba'."""
+        from app.services.conversation_manager import _normalizar_localidad
+        assert _normalizar_localidad("Córdoba") == "cordoba"
+        assert _normalizar_localidad("CÓRDOBA") == "cordoba"
+        assert _normalizar_localidad("Villa María") == "villa maria"
+        assert _normalizar_localidad(None) == ""
+
+    def test_cotizar_medimax_gold_con_cordoba_acento(self, manager):
+        """Localidad 'Córdoba' con tilde usa zona cordoba (no interior)."""
+        class _CalcFake:
+            def __init__(self):
+                self.zona_usada = None
+
+            def cotizar(self, *, lead, zona, nombre_plan, conceptos_obra_social=None):
+                self.zona_usada = zona
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    valor_plan_total=90000,
+                    valor_a_pagar=90000,
+                    plan_joven_disponible=False,
+                )
+
+        calc = _CalcFake()
+        manager._calculator = calc
+
+        session = manager.session_manager.get_or_create(9042)
+        session.lead.nombre = "Carlos"
+        session.lead.localidad = "Córdoba"
+        session.lead.edad = 30
+        session.lead.tipo_afiliacion = TipoAfiliacion.PARTICULAR
+        session.lead.estado_comercial = EstadoComercial.INTERESADO
+        session.etapa = EtapaConversacion.PRESENTANDO_VALOR
+
+        respuesta = manager._cotizar_plan_especifico(session, "medimax_gold")
+        assert calc.zona_usada == "cordoba"
+        assert "90,000" in respuesta
+        assert "94,500" not in respuesta
+
+    def test_cotizar_medimax_gold_localidad_interior(self, manager):
+        """Localidad fuera de Córdoba usa zona interior."""
+        class _CalcFake:
+            def __init__(self):
+                self.zona_usada = None
+
+            def cotizar(self, *, lead, zona, nombre_plan, conceptos_obra_social=None):
+                self.zona_usada = zona
+                from types import SimpleNamespace
+                return SimpleNamespace(
+                    valor_plan_total=94500,
+                    valor_a_pagar=94500,
+                    plan_joven_disponible=False,
+                )
+
+        calc = _CalcFake()
+        manager._calculator = calc
+
+        session = manager.session_manager.get_or_create(9043)
+        session.lead.nombre = "Carlos"
+        session.lead.localidad = "Villa María"
+        session.lead.edad = 30
+        session.lead.tipo_afiliacion = TipoAfiliacion.PARTICULAR
+        session.lead.estado_comercial = EstadoComercial.INTERESADO
+        session.etapa = EtapaConversacion.PRESENTANDO_VALOR
+
+        manager._cotizar_plan_especifico(session, "medimax_gold")
+        assert calc.zona_usada == "interior"

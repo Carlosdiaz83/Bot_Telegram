@@ -242,6 +242,13 @@ def create_app() -> FastAPI:
         except Exception:
             engine_url = None
 
+        warnings = []
+        if engine_url and "sqlite" in engine_url:
+            warnings.append(
+                "DB SQLite efímera: los datos se pierden en cada deploy. "
+                "Configurá DATABASE_URL (PostgreSQL) en el dashboard de Render."
+            )
+
         return JSONResponse({
             "status": "ok",
             "service": "sofia",
@@ -252,6 +259,7 @@ def create_app() -> FastAPI:
             "knowledge_dir": knowledge_dir,
             "knowledge_state": knowledge_state,
             "engine_url": engine_url,
+            "warnings": warnings,
         })
 
     # Bootstrap manual: fuerza la importación de datos

@@ -62,6 +62,21 @@ from app.database.repository import ConversationRepository, LeadRepository
 logger = logging.getLogger(__name__)
 
 
+def _normalizar_localidad(localidad: Optional[str]) -> str:
+    """Normaliza la localidad: minúsculas y sin acentos.
+
+    Ej: "Córdoba" -> "cordoba", "Villa María" -> "villa maria".
+    """
+    if not localidad:
+        return ""
+    acentos = {
+        "á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u",
+        "Á": "a", "É": "e", "Í": "i", "Ó": "o", "Ú": "u", "Ü": "u",
+    }
+    texto = localidad.lower()
+    return "".join(acentos.get(c, c) for c in texto)
+
+
 class ConversationManager:
     """
     Orquestador del flujo de conversación comercial.
@@ -872,7 +887,7 @@ class ConversationManager:
         lead.estado_comercial = EstadoComercial.INTERESADO
 
         zona = "cordoba"
-        if lead.localidad and "cordoba" not in lead.localidad.lower():
+        if "cordoba" not in _normalizar_localidad(lead.localidad):
             zona = "interior"
 
         descripciones = {
@@ -973,7 +988,7 @@ class ConversationManager:
         lead = session.lead
 
         zona = "cordoba"
-        if lead.localidad and "cordoba" not in lead.localidad.lower():
+        if "cordoba" not in _normalizar_localidad(lead.localidad):
             zona = "interior"
 
         descripciones = {
