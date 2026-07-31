@@ -158,12 +158,37 @@ def create_app() -> FastAPI:
             ).stdout.strip()
         except Exception:
             commit = "unknown"
+
+        data_state = None
+        try:
+            from app.database.database import get_engine, get_session_factory
+            from sqlalchemy import text
+            engine = get_engine()
+            factory = get_session_factory(engine)
+            db = factory()
+            try:
+                counts = {}
+                for tabla in ("servired_prices", "servired_aportes_monotributo", "servired_knowledge"):
+                    try:
+                        with engine.connect() as conn:
+                            counts[tabla] = conn.execute(
+                                text(f"SELECT COUNT(*) FROM {tabla}")
+                            ).scalar()
+                    except Exception:
+                        counts[tabla] = None
+                data_state = counts
+            finally:
+                db.close()
+        except Exception:
+            data_state = None
+
         return JSONResponse({
             "status": "ok",
             "service": "sofia",
             "version": "1.0.0",
             "commit": commit,
             "telegram_bot": "running" if telegram_alive else "not_started",
+            "data": data_state,
         })
 
     # Panel web (rutas existentes)
