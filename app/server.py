@@ -179,6 +179,40 @@ def create_app() -> FastAPI:
                 data_state = counts
             finally:
                 db.close()
+
+            # Self-healing: si la DB está vacía pero existe el conocimiento
+            # en disco, repoblar automáticamente (evita depender del bootstrap
+            # del lifespan, que puede fallar silenciosamente en Render).
+            if (
+                data_state is not None
+                and (data_state.get("servired_prices") or 0) == 0
+            ):
+                from app.database.bootstrap import KNOWLEDGE_DIR, bootstrap_datos
+                if KNOWLEDGE_DIR.is_dir():
+                    logger.warning(
+                        "[HEALTH] DB vacía pero knowledge existe en disco — "
+                        "repoblando automáticamente"
+                    )
+                    db2 = factory()
+                    try:
+                        estado = bootstrap_datos(db2)
+                        logger.info(
+                            "[HEALTH] Self-healing bootstrap: %s",
+                            {k: v for k, v in estado.items()},
+                        )
+                        mapeo = {
+                            "precios": "servired_prices",
+                            "aportes": "servired_aportes_monotributo",
+                            "knowledge": "servired_knowledge",
+                        }
+                        for k, v in estado.items():
+                            tabla = mapeo.get(k, k)
+                            if tabla in data_state:
+                                data_state[tabla] = v
+                    except Exception as exc:
+                        logger.error("[HEALTH] Self-healing bootstrap falló: %s", exc)
+                    finally:
+                        db2.close()
         except Exception:
             data_state = None
 

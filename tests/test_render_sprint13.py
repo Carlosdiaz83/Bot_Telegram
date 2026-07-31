@@ -188,6 +188,37 @@ class TestHealthCheck:
         response = client.get("/health")
         assert "application/json" in response.headers["content-type"]
 
+    def test_health_self_healing_db_vacia(self, monkeypatch, tmp_path):
+        """Si la DB está vacía pero existe knowledge en disco, /health la repuebla."""
+        import app.server as server_module
+        from fastapi.testclient import TestClient
+
+        # Apuntar a una DB limpia y forzar recarga de configuración
+        db_file = tmp_path / "selfhealing.db"
+        monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_file}")
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+        monkeypatch.setenv("APP_ENV", "test")
+        monkeypatch.setenv("APP_DEBUG", "false")
+        server_module._config = None
+        cerrar_engine()
+
+        app = server_module.create_app()
+        client = TestClient(app)
+
+        # Vaciar las tablas para simular que el bootstrap del arranque no corrió
+        from sqlalchemy import text
+        engine = get_engine()
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM servired_prices"))
+            conn.execute(text("DELETE FROM servired_aportes_monotributo"))
+            conn.execute(text("DELETE FROM servired_knowledge"))
+
+        response = client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"]["servired_prices"] > 0
+        assert data["data"]["servired_aportes_monotributo"] > 0
+
 
 # ─────────────────────────────────────────────
 # Tests — Render configuration
