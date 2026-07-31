@@ -33,6 +33,10 @@ def get_engine(database_url: Optional[str] = None) -> Engine:
     """
     Retorna o crea el engine de base de datos.
 
+    Si ya existe un engine global y no se provee URL, devuelve el existente.
+    Si se provee una URL distinta a la del engine actual, usa la nueva URL
+    (crea el engine correspondiente y lo deja como global).
+
     Args:
         database_url: URL de conexión. Si no se provee, usa SQLite local.
 
@@ -47,6 +51,9 @@ def get_engine(database_url: Optional[str] = None) -> Engine:
     if database_url is None:
         db_path = Path(__file__).parent.parent.parent / "health_advisor.db"
         database_url = f"sqlite:///{db_path}"
+
+    if _engine is not None and _engine.url == database_url:
+        return _engine
 
     # Configuración específica para PostgreSQL
     kwargs: dict = {

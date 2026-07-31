@@ -363,3 +363,36 @@ class TestEvolucion:
         assert "Fortalezas" in response.text
         assert "Debilidades" in response.text
         _cleanup(tmp_name)
+
+    def test_get_panel_db_no_sobreescribe_engine_global(self):
+        """get_panel_db reutiliza el engine global, no crea SQLite propio."""
+        from app.database.database import get_engine, cerrar_engine, get_session_factory
+        from app.panel import dependencies
+
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp.close()
+        db_url = f"sqlite:///{tmp.name}"
+
+        try:
+            cerrar_engine()
+            engine = get_engine(db_url)
+            crear_tablas(engine)
+
+            dependencies._panel_db_factory = None
+            db = dependencies.get_panel_db()
+            try:
+                next(db)
+            except StopIteration:
+                pass
+            finally:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+
+            assert get_engine() is engine, (
+                "get_panel_db NO debe reemplazar el engine global"
+            )
+        finally:
+            cerrar_engine()
+            os.unlink(tmp.name)
