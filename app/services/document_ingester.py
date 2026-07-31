@@ -648,7 +648,19 @@ class DocumentIngester:
     # ─────────────────────────────────────────
 
     def _extraer_texto_pdf(self, ruta: Path) -> str:
-        """Extrae texto de un PDF. Intenta PyPDF2, luego pdfplumber."""
+        """Extrae texto de un PDF. Intenta pypdf, luego PyPDF2, luego pdfplumber."""
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(str(ruta))
+            partes = []
+            for page in reader.pages:
+                texto = page.extract_text()
+                if texto:
+                    partes.append(texto)
+            return "\n\n".join(partes)
+        except ImportError:
+            pass
+
         try:
             from PyPDF2 import PdfReader
             reader = PdfReader(str(ruta))

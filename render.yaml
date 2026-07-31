@@ -11,7 +11,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: python -m app.database.migrations && python -m app.services.price_importer servired_knowledge/precios/PRECIOS\ MAYO\ 2026\ \(1\).xls && python -m app.services.aportes_importer servired_knowledge/aportes/aportes_monotributo.xlsx
+    preDeployCommand: python -m app.database.migrations && python -m app.services.price_importer servired_knowledge/precios/PRECIOS\ MAYO\ 2026\ \(1\).xls && python -m app.services.aportes_importer servired_knowledge/aportes/aportes_monotributo.xlsx && python -m app.services servired_knowledge
     startCommand: uvicorn app.server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:

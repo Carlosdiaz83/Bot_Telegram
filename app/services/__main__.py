@@ -34,12 +34,15 @@ def main() -> int:
 
     carpeta = sys.argv[1]
 
-    from app.database.database import get_session_factory
+    import os
+    from app.database.database import get_engine, get_session_factory
     from app.services.knowledge_engine import KnowledgeEngine
     from app.services.document_ingester import DocumentIngester
 
     logger.info("Conectando a la base de datos...")
-    SessionLocal = get_session_factory()
+    database_url = os.environ.get("DATABASE_URL")
+    engine = get_engine(database_url)
+    SessionLocal = get_session_factory(engine)
     db = SessionLocal()
 
     try:
