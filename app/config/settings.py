@@ -38,6 +38,8 @@ class BotConfig:
     app_env: str = "development"
     app_debug: bool = False
     log_level: str = "INFO"
+    telegram_webhook: bool = False
+    webhook_base_url: str = ""
 
     @classmethod
     def from_env(cls, env_path: Path | None = None) -> BotConfig:
@@ -74,4 +76,8 @@ class BotConfig:
             app_env=os.getenv("APP_ENV", "development"),
             app_debug=os.getenv("APP_DEBUG", "false").lower() in ("true", "1", "yes"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
+            telegram_webhook=os.getenv(
+                "TELEGRAM_WEBHOOK", "false"
+            ).lower() in ("true", "1", "yes"),
+            webhook_base_url=os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/"),
         )

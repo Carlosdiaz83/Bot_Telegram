@@ -18,7 +18,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.config.settings import BotConfig
@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 _config: BotConfig | None = None
 _telegram_thread: threading.Thread | None = None
+_telegram_bot = None
+_webhook_ready = False
 
 
 def _run_telegram_bot(config: BotConfig) -> None:
@@ -62,7 +64,7 @@ def _run_telegram_bot(config: BotConfig) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle: inicia el bot de Telegram al arrancar."""
-    global _config, _telegram_thread
+    global _config, _telegram_thread, _telegram_bot, _webhook_ready
 
     logger.info("=== Lifespan iniciado ===")
     logger.info("Main thread: %s", threading.current_thread().name)
@@ -95,28 +97,47 @@ async def lifespan(app: FastAPI):
 
     logger.info("Base de datos lista")
 
-    # Iniciar Telegram bot en hilo daemon
-    logger.info("[TELEGRAM] Creando hilo daemon...")
-    _telegram_thread = threading.Thread(
-        target=_run_telegram_bot,
-        args=(_config,),
-        daemon=True,
-        name="telegram-bot",
-    )
-    _telegram_thread.start()
-    logger.info("[TELEGRAM] Hilo creado y start() llamado (is_alive=%s)", _telegram_thread.is_alive())
+    # Iniciar Telegram bot: webhook (prod) o polling (dev)
+    from app.telegram.bot import TelegramBot
 
-    # Esperar un momento para verificar que el hilo arrancó
-    time.sleep(1.0)
-    if _telegram_thread.is_alive():
-        logger.info("[TELEGRAM] ✅ Hilo corriendo exitosamente")
+    if _config.telegram_webhook:
+        logger.info("[TELEGRAM] Modo WEBHOOK activado (TELEGRAM_WEBHOOK=true)")
+        try:
+            _telegram_bot = TelegramBot(_config)
+            await _telegram_bot.start_webhook()
+            _webhook_ready = True
+            logger.info("[TELEGRAM] Webhook listo para recibir updates en /webhook/<token>")
+        except Exception as exc:
+            logger.error("[TELEGRAM] Error inicializando webhook: %s", exc, exc_info=True)
+            _webhook_ready = False
     else:
-        logger.error("[TELEGRAM] ❌ Hilo murió después de 1 segundo — revisar logs anteriores")
+        logger.info("[TELEGRAM] Modo POLLING (desarrollo)")
+        _telegram_thread = threading.Thread(
+            target=_run_telegram_bot,
+            args=(_config,),
+            daemon=True,
+            name="telegram-bot",
+        )
+        _telegram_thread.start()
+        logger.info("[TELEGRAM] Hilo creado y start() llamado (is_alive=%s)", _telegram_thread.is_alive())
+
+        # Esperar un momento para verificar que el hilo arrancó
+        time.sleep(1.0)
+        if _telegram_thread.is_alive():
+            logger.info("[TELEGRAM] ✅ Hilo corriendo exitosamente")
+        else:
+            logger.error("[TELEGRAM] ❌ Hilo murió después de 1 segundo — revisar logs anteriores")
 
     yield
 
     # Apagado
     logger.info("Apagando aplicación...")
+    try:
+        if _webhook_ready and _telegram_bot is not None:
+            await _telegram_bot.stop_webhook()
+            _webhook_ready = False
+    except Exception as exc:
+        logger.error("[TELEGRAM] Error cerrando webhook: %s", exc)
     from app.database.database import cerrar_engine
     cerrar_engine()
     logger.info("Aplicación detenida")
@@ -146,10 +167,32 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Webhook de Telegram: recibe updates vía POST (modo webhook en Render)
+    @app.post("/webhook/{token}")
+    async def telegram_webhook(token: str, request: Request):
+        global _webhook_ready, _telegram_bot
+        if _config is None or token != _config.telegram_token:
+            return JSONResponse({"ok": False, "error": "token inválido"}, status_code=404)
+        if not _webhook_ready or _telegram_bot is None:
+            return JSONResponse({"ok": False, "error": "webhook no inicializado"}, status_code=503)
+
+        try:
+            payload = await request.json()
+            await _telegram_bot.process_update_payload(payload)
+            return JSONResponse({"ok": True})
+        except Exception as exc:
+            logger.error("[WEBHOOK] Error procesando update: %s", exc, exc_info=True)
+            return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
     # Health check
     @app.get("/health")
     async def health():
         telegram_alive = _telegram_thread is not None and _telegram_thread.is_alive()
+        telegram_status = (
+            "webhook_ready"
+            if _webhook_ready
+            else ("running" if telegram_alive else "not_started")
+        )
         import subprocess
         try:
             commit = subprocess.run(
@@ -254,7 +297,7 @@ def create_app() -> FastAPI:
             "service": "sofia",
             "version": "1.0.0",
             "commit": commit,
-            "telegram_bot": "running" if telegram_alive else "not_started",
+            "telegram_bot": telegram_status,
             "data": data_state,
             "knowledge_dir": knowledge_dir,
             "knowledge_state": knowledge_state,

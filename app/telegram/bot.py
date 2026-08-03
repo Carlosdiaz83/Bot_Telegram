@@ -15,6 +15,7 @@ import signal
 import sys
 import threading
 
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from app.config.settings import BotConfig
@@ -173,3 +174,46 @@ class TelegramBot:
             )
         finally:
             logger.info("TelegramBot.run() completado")
+
+    async def start_webhook(self) -> None:
+        """
+        Inicializa la aplicación y registra el webhook en Telegram.
+
+        Debe ejecutarse dentro del event loop de FastAPI (lifespan).
+        Tras esto, los updates llegan por HTTP POST al endpoint /webhook.
+        """
+        self._application = self._build_application()
+        self._register_handlers(self._application)
+        await self._application.initialize()
+
+        if self._config.webhook_base_url:
+            webhook_url = (
+                f"{self._config.webhook_base_url}/webhook/{self._config.telegram_token}"
+            )
+            await self._application.bot.set_webhook(
+                url=webhook_url,
+                allowed_updates=["message", "callback_query"],
+            )
+            logger.info("[TELEGRAM] Webhook registrado: %s", webhook_url)
+        else:
+            logger.info("[TELEGRAM] Sin webhook_base_url; esperando updates manualmente")
+
+    async def process_update(self, update: Update) -> None:
+        """Procesa un update recibido por webhook."""
+        if self._application is None:
+            raise RuntimeError("TelegramBot no inicializado para webhook")
+        await self._application.process_update(update)
+
+    async def process_update_payload(self, payload: dict) -> None:
+        """Decodifica un payload JSON de Telegram y lo procesa."""
+        if self._application is None:
+            raise RuntimeError("TelegramBot no inicializado para webhook")
+        update = Update.de_json(payload, self._application.bot)
+        await self.process_update(update)
+
+    async def stop_webhook(self) -> None:
+        """Cierra la aplicación (shutdown) al apagar el servidor."""
+        if self._application is not None:
+            await self._application.shutdown()
+            self._application = None
+            logger.info("[TELEGRAM] Webhook application cerrada")

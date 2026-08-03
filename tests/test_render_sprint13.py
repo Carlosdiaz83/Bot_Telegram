@@ -61,6 +61,22 @@ class TestBotConfig:
         with pytest.raises(AttributeError):
             config.telegram_token = "otro"
 
+    def test_config_webhook_por_defecto_false(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.delenv("TELEGRAM_WEBHOOK", raising=False)
+        monkeypatch.delenv("RENDER_EXTERNAL_URL", raising=False)
+        config = BotConfig.from_env()
+        assert config.telegram_webhook is False
+        assert config.webhook_base_url == ""
+
+    def test_config_webhook_activo(self, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
+        monkeypatch.setenv("TELEGRAM_WEBHOOK", "true")
+        monkeypatch.setenv("RENDER_EXTERNAL_URL", "https://bot.example.com/")
+        config = BotConfig.from_env()
+        assert config.telegram_webhook is True
+        assert config.webhook_base_url == "https://bot.example.com"
+
 
 # ─────────────────────────────────────────────
 # Tests — PostgreSQL detection
@@ -282,6 +298,65 @@ class TestRenderConfig:
         gitignore = Path(__file__).parent.parent / ".gitignore"
         content = gitignore.read_text()
         assert ".env" in content
+
+
+# ─────────────────────────────────────────────
+# Tests — Webhook endpoint
+# ─────────────────────────────────────────────
+
+class TestWebhookEndpoint:
+    """Tests del endpoint /webhook/{token} (modo webhook en Render)."""
+
+    def _make_app(self):
+        from fastapi.testclient import TestClient
+        import app.server as server_module
+        app = server_module.create_app()
+        return app, TestClient(app), server_module
+
+    def test_token_invalido_devuelve_404(self):
+        import app.server as server_module
+        app, client, _ = self._make_app()
+        server_module._config = BotConfig(telegram_token="token-real")
+        response = client.post("/webhook/token-incorrecto", json={})
+        assert response.status_code == 404
+        assert response.json()["ok"] is False
+
+    def test_webhook_no_inicializado_devuelve_503(self):
+        import app.server as server_module
+        app, client, _ = self._make_app()
+        server_module._config = BotConfig(telegram_token="token-real")
+        server_module._webhook_ready = False
+        server_module._telegram_bot = None
+        response = client.post("/webhook/token-real", json={})
+        assert response.status_code == 503
+
+    def test_webhook_ok_procesa_update(self, monkeypatch):
+        import app.server as server_module
+        app, client, _ = self._make_app()
+
+        procesados = []
+        class FakeBot:
+            async def process_update_payload(self, payload):
+                procesados.append(payload)
+
+        server_module._config = BotConfig(telegram_token="token-real")
+        server_module._telegram_bot = FakeBot()
+        server_module._webhook_ready = True
+
+        payload = {
+            "update_id": 1,
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 123, "type": "private"},
+                "text": "hola",
+                "from": {"id": 123, "first_name": "Test"},
+            },
+        }
+        response = client.post("/webhook/token-real", json=payload)
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
+        assert len(procesados) == 1
+        assert procesados[0] == payload
 
 
 # ─────────────────────────────────────────────
