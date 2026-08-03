@@ -166,6 +166,61 @@ class KnowledgeEngine:
         return "particulares"
 
     # ─────────────────────────────────────────
+    # Búsqueda puntual para preguntas de prestaciones
+    # ─────────────────────────────────────────
+
+    def buscar_contenido(self, categoria: str, mensaje: str = "") -> str:
+        """
+        Busca contenido puntual en la DB por categoría y palabras clave.
+
+        Se usa para responder preguntas específicas sobre prestaciones
+        (farmacias, odontología, cartillas, coberturas, etc.).
+
+        Args:
+            categoria: Categoría de conocimiento (farmacias, odontologia, etc.).
+            mensaje: Mensaje del cliente para búsqueda por texto.
+
+        Returns:
+            Contenido relevante concatenado o "" si no hay resultados.
+        """
+        partes: list[str] = []
+
+        # 1. Por categoría
+        items = self._repo.buscar_por_categoria(categoria)
+        for item in items[:3]:
+            partes.append(item.contenido[:400])
+
+        # 2. Por texto del mensaje (si la categoría no dio resultados)
+        if not partes and mensaje:
+            texto = self._normalizar_texto(mensaje)
+            if texto:
+                coincidencias = self._repo.buscar_por_texto(texto, limite=3)
+                for item in coincidencias:
+                    if item.contenido not in "\n".join(partes):
+                        partes.append(item.contenido[:400])
+
+        return "\n\n".join(partes)
+
+    @staticmethod
+    def _normalizar_texto(texto: str) -> str:
+        """Extrae la primera palabra significativa para búsqueda."""
+        palabras_stop = {
+            "hola", "que", "como", "cual", "cuales", "donde", "cuando",
+            "quiero", "necesito", "puedo", "hay", "el", "la", "los", "las",
+            "un", "una", "de", "del", "al", "en", "con", "por", "para",
+            "sin", "sobre", "que", "si", "no", "ok", "cubren", "cubre",
+            "incluye", "tienen", "tiene", "hay",
+        }
+        acentos = {"á": "a", "é": "e", "í": "i", "ó": "o", "ú": "u", "ü": "u", "ñ": "n"}
+        limpio = texto.lower()
+        limpio = "".join(acentos.get(c, c) for c in limpio)
+        for p in limpio.split():
+            p = p.strip("?.,!¡")
+            if len(p) > 4 and p not in palabras_stop:
+                return p
+        return ""
+
+    # ─────────────────────────────────────────
     # CRUD (para ingestion)
     # ─────────────────────────────────────────
 

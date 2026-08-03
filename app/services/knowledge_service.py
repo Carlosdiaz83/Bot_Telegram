@@ -144,6 +144,22 @@ class KnowledgeService:
         """Retorna información de cobertura odontológica."""
         return self._cargar_archivo_ruta_relativa("odontologia/cobertura.md")
 
+    def obtener_beneficios_planes(self) -> str:
+        """Retorna los beneficios reales de los planes (cartillas oficiales)."""
+        return self._cargar_archivo_ruta_relativa("planes/beneficios.md")
+
+    def obtener_red_medica(self) -> str:
+        """Retorna el resumen de la red de prestadores médicos."""
+        return self._cargar_archivo_ruta_relativa("prestadores/red_medica.md")
+
+    def obtener_red_farmacias(self) -> str:
+        """Retorna el resumen de la red de farmacias adheridas."""
+        return self._cargar_archivo_ruta_relativa("prestadores/red_farmacias.md")
+
+    def obtener_red_odontologica(self) -> str:
+        """Retorna el resumen de la red odontológica."""
+        return self._cargar_archivo_ruta_relativa("prestadores/red_odontologica.md")
+
     # ─────────────────────────────────────────
     # Métodos de búsqueda por contexto (Sprint 1-14)
     # ─────────────────────────────────────────

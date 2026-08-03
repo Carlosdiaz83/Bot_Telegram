@@ -482,6 +482,19 @@ class KnowledgeRepository:
         result = self._db.execute(stmt)
         return result.scalar_one_or_none()
 
+    def buscar_por_fuente(self, fuente: str) -> list:
+        """Busca registros activos por fuente (archivo o URL de origen)."""
+        from app.database.models import ServiredKnowledgeDB
+        stmt = (
+            select(ServiredKnowledgeDB)
+            .where(
+                ServiredKnowledgeDB.fuente == fuente,
+                ServiredKnowledgeDB.activo == True,  # noqa: E712
+            )
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
     def buscar_por_categoria(self, categoria: str) -> list:
         """Busca registros activos por categoría, ordenados por prioridad descendente."""
         from app.database.models import ServiredKnowledgeDB

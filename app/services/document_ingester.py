@@ -78,6 +78,7 @@ class DocumentIngester:
         titulo: Optional[str] = None,
         tags: str = "",
         prioridad_comercial: int = 0,
+        fuente: Optional[str] = None,
     ) -> int:
         """
         Ingesta un archivo markdown como registro de conocimiento.
@@ -92,6 +93,8 @@ class DocumentIngester:
         contenido = ruta.read_text(encoding="utf-8")
         if titulo is None:
             titulo = ruta.stem.replace("_", " ").replace("-", " ").title()
+        if fuente is None:
+            fuente = str(ruta)
 
         logger.info("[DOC] Markdown encontrado: %s", ruta.name)
         item_id = self._engine.guardar(
@@ -99,7 +102,7 @@ class DocumentIngester:
             categoria=categoria,
             contenido=contenido,
             tags=tags,
-            fuente=str(ruta),
+            fuente=fuente,
             prioridad_comercial=prioridad_comercial,
         )
         logger.info(

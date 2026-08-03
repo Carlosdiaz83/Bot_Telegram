@@ -129,6 +129,18 @@ class ConversationManager:
         from app.services.commercial_director import CommercialDirector
         self._director = CommercialDirector()
 
+        # PrestacionesService — responde preguntas específicas sobre
+        # beneficios/cartillas/prestaciones con datos reales (DB → web oficial).
+        from app.services.web_knowledge_service import WebKnowledgeService
+        from app.services.prestaciones_service import PrestacionesService
+        self._web_knowledge = WebKnowledgeService()
+        self._prestaciones = PrestacionesService(
+            knowledge_engine=self._knowledge_engine if self._db_enabled else None,
+            knowledge_service=self.knowledge,
+            web_service=self._web_knowledge,
+        )
+        logger.info("[CONVERSATION] PrestacionesService inicializado")
+
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
         Procesa un mensaje del usuario y devuelve la respuesta de Sofía.
@@ -221,6 +233,15 @@ class ConversationManager:
             3. Etapas sin handler → orchestrator responde (CALIFICADO, DERIVADO)
         """
         etapa = session.etapa
+
+        # ── Preguntas sobre prestaciones (TODA la conversación) ──
+        # Si el cliente pregunta por un beneficio/cartilla/prestación específica,
+        # respondemos con datos reales (DB → markdown → web oficial) y retomamos
+        # el objetivo comercial.
+        respuesta_prestacion = self._responder_pregunta_prestacion(session, mensaje)
+        if respuesta_prestacion is not None:
+            session._handler_ejecutado = "prestaciones"
+            return respuesta_prestacion
 
         # ── NUEVO: handler tradicional (saludo + extracción nombre) ──
         if etapa == EtapaConversacion.NUEVO:
@@ -1121,6 +1142,86 @@ class ConversationManager:
             respuesta_logica=respuesta,
             session=session,
             interpretacion=interpretacion,
+        )
+
+    # ─────────────────────────────────────────
+    # Prestaciones — preguntas específicas en toda la conversación
+    # ─────────────────────────────────────────
+
+    def _responder_pregunta_prestacion(
+        self, session: UserSession, mensaje: str
+    ) -> str | None:
+        """
+        Responde preguntas específicas sobre beneficios/cartillas/prestaciones.
+
+        Fuentes permitidas (en orden): DB → markdown oficial → web serviredsalud.
+        Si no hay pregunta de prestaciones o dato disponible, retorna None
+        para que la conversación continúe con el flujo normal.
+        """
+        try:
+            resultado = self._prestaciones.responder(mensaje)
+        except Exception as exc:
+            logger.warning("[PRESTACIONES] Error analizando: %s", exc)
+            return None
+
+        if not resultado:
+            return None
+
+        respuesta, categoria = resultado
+        retorno = self._retorno_objetivo(session)
+        texto = f"{respuesta}\n\n{retorno}"
+
+        logger.info(
+            "[PRESTACIONES] user=%s, categoria=%s, respuesta=%d chars",
+            session.telegram_id, categoria, len(texto),
+        )
+        return texto
+
+    def _retorno_objetivo(self, session: UserSession) -> str:
+        """Retoma el objetivo comercial según la etapa actual."""
+        lead = session.lead
+        nombre = lead.nombre or ""
+        etapa = session.etapa
+
+        if etapa in (
+            EtapaConversacion.CALIFICANDO,
+            EtapaConversacion.ESPERANDO_DATOS,
+        ):
+            if lead.tipo_afiliacion is None:
+                return (
+                    "¿Avanzamos con la propuesta? Decime cómo es tu situación "
+                    "laboral (relación de dependencia, monotributo o particular) "
+                    "y te armo la cotización."
+                )
+            faltantes = self._datos_faltantes_para_cotizar(lead)
+            if faltantes:
+                return (
+                    f"Decime {faltantes[0]} y te armo la cotización "
+                    "con estos beneficios."
+                )
+
+        if etapa in (
+            EtapaConversacion.PRESENTANDO_VALOR,
+            EtapaConversacion.COTIZANDO,
+            EtapaConversacion.MANEJANDO_OBJECIONES,
+            EtapaConversacion.INTENTANDO_CIERRE,
+        ):
+            return (
+                "¿Te pareció bien la propuesta que te mostré? "
+                "Si querés, avanzamos con la afiliación."
+            )
+
+        # NUEVO / DESCUBRIENDO_NECESIDAD
+        if nombre:
+            return (
+                f"¿Avanzamos {nombre}? Decime cómo es tu situación laboral "
+                "(relación de dependencia, monotributo o particular) "
+                "y te armo la propuesta."
+            )
+        return (
+            "¿Avanzamos? Decime cómo es tu situación laboral "
+            "(relación de dependencia, monotributo o particular) "
+            "y te armo la propuesta."
         )
 
     def _obtener_knowledge_para_etapa(

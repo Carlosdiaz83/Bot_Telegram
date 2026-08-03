@@ -19,9 +19,20 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger(__name__)
 
 KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent.parent / "servired_knowledge"
+APP_KNOWLEDGE_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "app" / "knowledge" / "servired"
+)
 
 PRECIOS_GLOB = "precios/*.xls*"
 APORTES_GLOB = "aportes/*.xlsx*"
+
+# Categoría de prestación → tags para la búsqueda en la DB.
+_TAGS_PRESTACIONES: dict[str, str] = {
+    "prestadores": "cartilla, red medica, prestadores, especialidades, clinicas, sanatorios",
+    "farmacias": "farmacias, red farmaceutica, medicamentos, descuentos",
+    "odontologia": "odontologia, dentista, ortodoncia, cartilla odontologica",
+    "planes": "beneficios, planes, gold, medimax, coseguros",
+}
 
 
 def _tabla_vacia(db: Session, tabla: str) -> bool:
@@ -93,6 +104,76 @@ def _ingestar_knowledge(db: Session) -> int:
     return stats["archivos_ok"]
 
 
+def _categoria_prestacion(archivo: Path) -> str:
+    """Categoría de prestación según el nombre del markdown de cartilla."""
+    nombre = archivo.stem.lower()
+    if "medica" in nombre:
+        return "prestadores"
+    if "farmacia" in nombre:
+        return "farmacias"
+    if "odontolog" in nombre:
+        return "odontologia"
+    return ""
+
+
+def _ingestar_markdowns_prestaciones(db: Session) -> int:
+    """
+    Ingesta idempotente de los markdowns de prestaciones (cartillas oficiales).
+
+    Fuentes: app/knowledge/servired/prestadores/*.md y
+             app/knowledge/servired/planes/beneficios.md.
+
+    Solo ingesta archivos cuya fuente (ruta relativa) aún no esté cargada
+    en la DB. Al repetir el deploy no duplica registros.
+    """
+    from app.database.repository import KnowledgeRepository
+    from app.services.document_ingester import DocumentIngester
+    from app.services.knowledge_engine import KnowledgeEngine
+
+    if not APP_KNOWLEDGE_DIR.is_dir():
+        logger.warning("[BOOTSTRAP] Carpeta knowledge app no encontrada: %s", APP_KNOWLEDGE_DIR)
+        return 0
+
+    repo = KnowledgeRepository(db)
+    ingester = DocumentIngester(KnowledgeEngine(db))
+
+    # Fuentes de prestaciones: prestadores/*.md + planes/beneficios.md
+    fuentes: list[tuple[str, Path]] = []
+    prestadores = APP_KNOWLEDGE_DIR / "prestadores"
+    if prestadores.is_dir():
+        for archivo in sorted(prestadores.glob("*.md")):
+            categoria = _categoria_prestacion(archivo)
+            if categoria:
+                fuentes.append((categoria, archivo))
+
+    beneficios = APP_KNOWLEDGE_DIR / "planes" / "beneficios.md"
+    if beneficios.is_file():
+        fuentes.append(("planes", beneficios))
+
+    creados = 0
+    for categoria, archivo in fuentes:
+        # Fuente estable (ruta relativa al repo) para idempotencia entre deploys.
+        fuente = str(archivo.relative_to(APP_KNOWLEDGE_DIR.parents[2])).replace("\\", "/")
+        if repo.buscar_por_fuente(fuente):
+            logger.info("[BOOTSTRAP] Ya ingestado (skip): %s", fuente)
+            continue
+
+        try:
+            ingester.ingestir_markdown(
+                categoria, archivo,
+                tags=_TAGS_PRESTACIONES.get(categoria, ""),
+                prioridad_comercial=10,
+                fuente=fuente,
+            )
+            creados += 1
+        except Exception as exc:
+            logger.error("[BOOTSTRAP] Error ingestando %s: %s", archivo, exc)
+
+    if creados:
+        logger.info("[BOOTSTRAP] Prestaciones ingestadas: %d nuevos registros", creados)
+    return creados
+
+
 def bootstrap_datos(db: Session) -> dict:
     """
     Verifica y completa los datos esenciales de la DB.
@@ -125,12 +206,17 @@ def bootstrap_datos(db: Session) -> dict:
         logger.error("[BOOTSTRAP] Error importando aportes: %s", exc)
 
     try:
-        if _tabla_vacia(db, "servired_knowledge"):
+        from app.database.repository import KnowledgeRepository
+        repo = KnowledgeRepository(db)
+        estado["knowledge"] = len(repo.activos())
+        if estado["knowledge"] == 0:
+            # Tabla vacía: ingesta completa de servired_knowledge/ (PDFs, txt, md)
             estado["knowledge"] = _ingestar_knowledge(db)
         else:
-            from app.database.repository import KnowledgeRepository
-            estado["knowledge"] = len(KnowledgeRepository(db).activos())
             logger.info("[BOOTSTRAP] Knowledge ya poblado (%d)", estado["knowledge"])
+
+        # Ingesta idempotente de markdowns de prestaciones por categoría faltante
+        estado["knowledge"] += _ingestar_markdowns_prestaciones(db)
     except Exception as exc:
         logger.error("[BOOTSTRAP] Error ingestando knowledge: %s", exc)
 
