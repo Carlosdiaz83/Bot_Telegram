@@ -39,6 +39,11 @@ class EtapaConversacion(str, Enum):
     INTENTANDO_CIERRE = "intentando_cierre"
     CALIFICADO = "calificado"
     DERIVADO = "derivado"
+    # Modo vendedor: cotizaciones para clientes
+    VENDEDOR_BIENVENIDA = "vendedor_bienvenida"
+    VENDEDOR_TIPO = "vendedor_tipo"
+    VENDEDOR_DATOS = "vendedor_datos"
+    VENDEDOR_COTIZANDO = "vendedor_cotizando"
 
 
 class ResultadoCierre(str, Enum):
@@ -76,6 +81,8 @@ class UserSession:
         self._handler_ejecutado: str = "none"
         # Archivos a enviar como respaldo tras la respuesta (ej: cartillas PDF).
         self.adjuntos_pendientes: list[str] = []
+        # Modo vendedor: el usuario cotiza para sus clientes en lugar de para sí mismo.
+        self.es_vendedor: bool = False
 
     def actualizar_interaccion(self) -> None:
         """Registra la hora de la última interacción."""

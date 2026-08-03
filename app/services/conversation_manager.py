@@ -87,6 +87,38 @@ class ConversationManager:
     del usuario desde el primer mensaje hasta el cierre.
     """
 
+    # Etapas del modo vendedor (cotizaciones para clientes).
+    _ETAPAS_VENDEDOR = frozenset({
+        EtapaConversacion.VENDEDOR_BIENVENIDA,
+        EtapaConversacion.VENDEDOR_TIPO,
+        EtapaConversacion.VENDEDOR_DATOS,
+        EtapaConversacion.VENDEDOR_COTIZANDO,
+    })
+
+    # Frases que activan el modo vendedor.
+    _VENDEDOR_FRASES = (
+        "soy vendedor", "soy un vendedor", "soy vendedora", "soy una vendedora",
+        "vendedor de servired", "vendedora de servired",
+        "soy asesor de ventas", "soy asesora de ventas",
+        "vendo planes", "vendo planes de servired",
+        "me dedico a vender", "trabajo vendiendo",
+    )
+
+    # Frases que cierran el modo vendedor.
+    _VENDEDOR_SALIR = (
+        "salir del modo vendedor", "salir del modo",
+        "no soy vendedor", "dejar de ser vendedor",
+        "no quiero ser vendedor",
+    )
+
+    # Descripciones cortas por plan (fallback si no hay cartilla).
+    _DESCRIPCIONES_PLANES = {
+        "medimax": "Cobertura completa con consultas, estudios y odontología",
+        "medimax gold": "Cobertura premium con mayores prestaciones y mejores descuentos",
+        "medimax co": "Plan económico con las prestaciones esenciales al mejor precio",
+        "gold": "Tope de gama con la máxima cobertura y sin coseguros",
+    }
+
     def __init__(
         self,
         ai_service: Optional[AIService] = None,
@@ -264,6 +296,20 @@ class ConversationManager:
         if etapa != EtapaConversacion.NUEVO and self._es_saludo_puro(mensaje):
             session._handler_ejecutado = "_handle_saludo"
             return self._responder_saludo(session)
+
+        # ── Modo vendedor: el usuario cotiza para sus clientes ──
+        # Si ya está en modo vendedor (o la etapa vendedor se rehidrató desde
+        # DB), toda la conversación se enruta a los handlers de vendedor.
+        if session.es_vendedor or etapa in self._ETAPAS_VENDEDOR:
+            session.es_vendedor = True
+            session._handler_ejecutado = "vendedor"
+            return self._handle_vendedor_etapa(session, mensaje)
+
+        # Si el usuario declara ser vendedor, activar el modo vendedor.
+        if self._es_mensaje_vendedor(mensaje):
+            session.es_vendedor = True
+            session._handler_ejecutado = "_handle_vendedor_bienvenida"
+            return self._handle_vendedor_bienvenida(session, mensaje)
 
         # ── NUEVO: handler tradicional (saludo + extracción nombre) ──
         if etapa == EtapaConversacion.NUEVO:
@@ -549,6 +595,12 @@ class ConversationManager:
 
     def _enrutar_mensaje_directo(self, session: UserSession, mensaje: str) -> str:
         """Enruta directamente a la etapa sin detectar returning."""
+        # Modo vendedor (o etapa vendedor rehidratada desde DB).
+        if session.es_vendedor or session.etapa in self._ETAPAS_VENDEDOR:
+            session.es_vendedor = True
+            session._handler_ejecutado = "vendedor"
+            return self._handle_vendedor_etapa(session, mensaje)
+
         etapa = session.etapa
 
         # Obtener interpretación del Orchestrator para el Director
@@ -835,26 +887,362 @@ class ConversationManager:
         return recuperar_indeciso(lead)
 
     # ─────────────────────────────────────────
+    # Modo vendedor — cotizaciones para clientes
+    # ─────────────────────────────────────────
+
+    def _es_mensaje_vendedor(self, mensaje: str) -> bool:
+        """Detecta si el usuario declara ser vendedor de SERVIRED."""
+        if not mensaje:
+            return False
+        texto = _normalizar_localidad(mensaje).lower()
+        return any(frase in texto for frase in self._VENDEDOR_FRASES)
+
+    def _es_salir_vendedor(self, mensaje: str) -> bool:
+        """Detecta si el vendedor quiere salir del modo vendedor."""
+        if not mensaje:
+            return False
+        texto = _normalizar_localidad(mensaje).lower()
+        return any(frase in texto for frase in self._VENDEDOR_SALIR)
+
+    def _handle_vendedor_etapa(self, session: UserSession, mensaje: str) -> str:
+        """Enruta el mensaje dentro del modo vendedor según la etapa."""
+        if self._es_salir_vendedor(mensaje):
+            return self._salir_modo_vendedor(session)
+
+        etapa = session.etapa
+        if etapa == EtapaConversacion.VENDEDOR_BIENVENIDA:
+            return self._handle_vendedor_bienvenida(session, mensaje)
+        if etapa == EtapaConversacion.VENDEDOR_TIPO:
+            return self._handle_vendedor_tipo(session, mensaje)
+        if etapa == EtapaConversacion.VENDEDOR_DATOS:
+            return self._handle_vendedor_datos(session, mensaje)
+        if etapa == EtapaConversacion.VENDEDOR_COTIZANDO:
+            return self._handle_vendedor_cotizando_loop(session, mensaje)
+
+        # Rehidratar una sesión vendedor sin etapa vendedor válida.
+        session.avanzar_etapa(EtapaConversacion.VENDEDOR_TIPO)
+        return self._handle_vendedor_tipo(session, mensaje)
+
+    def _handle_vendedor_bienvenida(self, session: UserSession, mensaje: str) -> str:
+        """Activa el modo vendedor: presenta la asistencia de cotización."""
+        lead = session.lead
+        lead.estado_comercial = EstadoComercial.CALIFICANDO
+        session.avanzar_etapa(EtapaConversacion.VENDEDOR_TIPO)
+        return (
+            "¡Hola! Soy Sofía 😊. ¡Perfecto que sos vendedor de Servired! "
+            "Te ayudo a armar las cotizaciones de tus clientes. "
+            "Decime: ¿la persona a cotizar es con recibo de sueldo, "
+            "monotributo o directo? ¿O solo tenés una consulta?"
+        )
+
+    def _detectar_tipo_cotizacion(self, mensaje: str) -> TipoAfiliacion | None:
+        """Detecta el tipo de afiliación de la persona a cotizar."""
+        if not mensaje:
+            return None
+        texto = _normalizar_localidad(mensaje).lower()
+
+        if any(p in texto for p in ["monotributo", "monotributista"]):
+            return TipoAfiliacion.MONOTRIBUTO
+        if any(p in texto for p in [
+            "recibo", "relacion de dependencia", "dependencia",
+            "empleado", "en blanco", "con aportes", "obra social",
+        ]):
+            return TipoAfiliacion.RELACION_DEPENDENCIA
+        if any(p in texto for p in [
+            "directo", "particular", "autonomo", "independiente",
+            "sin recibo", "sin monotributo",
+        ]):
+            return TipoAfiliacion.PARTICULAR
+        return None
+
+    def _handle_vendedor_tipo(self, session: UserSession, mensaje: str) -> str:
+        """Recolecta el tipo de afiliación de la persona a cotizar (o deriva a consulta)."""
+        lead = session.lead
+
+        tipo = self._detectar_tipo_cotizacion(mensaje)
+        if tipo is not None:
+            lead.tipo_afiliacion = tipo
+
+            # Capturar datos extra que puedan venir en el mismo mensaje.
+            from app.services.lead_qualifier import (
+                _detectar_grupo_familiar,
+                _extraer_edad,
+                _extraer_localidad,
+            )
+            if lead.edad is None:
+                lead.edad = _extraer_edad(mensaje)
+            if lead.localidad is None:
+                lead.localidad = _extraer_localidad(mensaje)
+            gf = _detectar_grupo_familiar(mensaje)
+            if gf:
+                lead.actualizar_grupo_familiar(
+                    conyuge=gf["conyuge"],
+                    hijos=gf["hijos"],
+                    cantidad_hijos=gf["cantidad_hijos"],
+                )
+
+            session.avanzar_etapa(EtapaConversacion.VENDEDOR_DATOS)
+            return (
+                "¡Genial! Necesito los datos de la persona a cotizar: "
+                "¿cómo se llama?"
+            )
+
+        if any(p in mensaje.lower() for p in [
+            "consulta", "pregunta", "duda", "información", "info",
+            "otra consulta", "quería saber",
+        ]):
+            return "¡Claro! Decime tu consulta y te ayudo 😊"
+
+        return (
+            "Perfecto, necesito saber si la persona a cotizar es con recibo "
+            "de sueldo, monotributo o directo. ¿O solo tenés una consulta?"
+        )
+
+    def _handle_vendedor_datos(self, session: UserSession, mensaje: str) -> str:
+        """Recolecta los datos de la persona a cotizar y arma la cotización."""
+        import re
+
+        lead = session.lead
+
+        # Nombre de la persona a cotizar.
+        if lead.nombre is None:
+            from app.services.lead_qualifier import _extraer_nombre
+            nombre_msg = re.sub(
+                r"^(?:el|la)\s+(?:cliente|persona)\s+se\s+llama\s+",
+                "", mensaje, flags=re.IGNORECASE,
+            )
+            nombre_msg = re.sub(
+                r"^se\s+llama\s+", "", nombre_msg, flags=re.IGNORECASE,
+            )
+            nombre = _extraer_nombre(nombre_msg) or _extraer_nombre(mensaje)
+            if not nombre:
+                texto_limpio = mensaje.strip()
+                if (
+                    texto_limpio
+                    and " " not in texto_limpio
+                    and texto_limpio.isalpha()
+                    and len(texto_limpio) >= 3
+                    and texto_limpio.lower() not in {"no", "si", "consulta", "ayuda", "monotributo", "recibo", "directo", "particular"}
+                ):
+                    nombre = texto_limpio.capitalize()
+            # Último recurso: primera palabra con mayúscula inicial (estamos
+            # en el paso del nombre, así que el candidato es casi seguro el nombre).
+            if not nombre:
+                match = re.search(
+                    r"\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,})\b", mensaje
+                )
+                if match:
+                    candidato = match.group(1)
+                    if candidato.lower() not in {
+                        "córdoba", "cordoba", "rosario", "salta", "mendoza",
+                        "chaco", "santa", "fe", "tucuman", "tucumán",
+                    }:
+                        nombre = candidato
+            if not nombre:
+                return "¿Cómo se llama la persona a cotizar?"
+            lead.nombre = nombre
+
+        # Datos restantes: edad, localidad, grupo familiar, categoría/recibo.
+        from app.services.lead_qualifier import (
+            _detectar_grupo_familiar,
+            _extraer_edad,
+            _extraer_localidad,
+        )
+        if lead.localidad is None:
+            lead.localidad = _extraer_localidad(mensaje)
+        if lead.edad is None:
+            lead.edad = _extraer_edad(mensaje)
+        if not lead.grupo_familiar.conyuge and not lead.grupo_familiar.hijos:
+            gf = _detectar_grupo_familiar(mensaje)
+            if gf:
+                lead.actualizar_grupo_familiar(
+                    conyuge=gf["conyuge"],
+                    hijos=gf["hijos"],
+                    cantidad_hijos=gf["cantidad_hijos"],
+                )
+
+        if (
+            lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO
+            and lead.categoria_monotributo is None
+        ):
+            match = re.search(r"categor[íi]a\s+([A-Ha-h])", mensaje, re.IGNORECASE)
+            if match:
+                lead.categoria_monotributo = match.group(1).upper()
+
+        if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
+            if self._detectar_recibo_sueldo(mensaje):
+                lead.tiene_recibo_sueldo = True
+                if not lead.conceptos_obra_social:
+                    conceptos = self._extraer_conceptos_obra_social(mensaje)
+                    if conceptos:
+                        lead.conceptos_obra_social = conceptos
+
+        faltantes = self._datos_faltantes_para_cotizar(lead, vendedor=True)
+        if not faltantes:
+            session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
+            return self._handle_vendedor_cotizando(session, mensaje)
+
+        session.mensajes_en_etapa += 1
+        return f"¿{faltantes[0].capitalize()}?"
+
+    def _handle_vendedor_cotizando(self, session: UserSession, mensaje: str) -> str:
+        """Arma la cotización de los planes para el cliente del vendedor."""
+        lead = session.lead
+
+        zona = "cordoba"
+        if "cordoba" not in _normalizar_localidad(lead.localidad):
+            zona = "interior"
+
+        planes = ["medimax", "medimax gold", "medimax co"]
+
+        session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
+
+        if self._calculator is None:
+            texto = (
+                f"¡Listo! Acá tenés los planes para "
+                f"*{lead.nombre or 'tu cliente'}*:\n\n"
+            )
+            for plan in planes:
+                texto += f"📋 *{plan.title()}*\n"
+                bullets = self._bullets_plan(plan, 4)
+                if bullets:
+                    for b in bullets:
+                        texto += f"   ✓ {b}\n"
+                else:
+                    texto += f"   {self._DESCRIPCIONES_PLANES.get(plan, '')}\n"
+                texto += "\n"
+            texto += "¿Querés que cotice otro cliente o tenés alguna otra consulta?"
+            session.adjuntos_pendientes = self._adjuntos_planes(planes)
+            return texto
+
+        resultados = []
+        for plan in planes:
+            resultado = self._calculator.cotizar(
+                lead=lead,
+                zona=zona,
+                nombre_plan=plan,
+                conceptos_obra_social=lead.conceptos_obra_social or None,
+            )
+            if resultado and resultado.valor_plan_total > 0:
+                resultados.append(resultado)
+
+        if not resultados:
+            return (
+                "Por el momento no tengo precios disponibles para armar la "
+                "cotización de tu cliente. Comunicate con nosotros al "
+                "0800-xxx-xxxx y te ayudamos."
+            )
+
+        texto = (
+            f"¡Listo! Acá tenés la cotización para "
+            f"*{lead.nombre or 'tu cliente'}*:\n\n"
+        )
+        for r in resultados:
+            texto += f"📋 *Plan {r.plan.title()}*\n"
+            texto += f"   💰 *${r.valor_a_pagar:,.2f}/mes*\n"
+            bullets = self._bullets_plan(r.plan, 4)
+            if bullets:
+                for b in bullets:
+                    texto += f"   ✓ {b}\n"
+            else:
+                texto += f"   {self._DESCRIPCIONES_PLANES.get(r.plan, '')}\n"
+            if r.plan_joven_disponible:
+                texto += "   🎉 Plan Joven disponible\n"
+            texto += "\n"
+
+        texto += "¿Querés que cotice otro cliente o tenés alguna otra consulta?"
+
+        # Cartillas oficiales de los planes como respaldo (tras la info).
+        session.adjuntos_pendientes = self._adjuntos_planes([r.plan for r in resultados])
+
+        logger.info(
+            "[CONVERSATION] Cotización vendedor generada — user=%s, cliente=%s, planes=%d",
+            session.telegram_id, lead.nombre, len(resultados),
+        )
+
+        return texto
+
+    def _handle_vendedor_cotizando_loop(self, session: UserSession, mensaje: str) -> str:
+        """Interpreta la respuesta tras la cotización (otro cliente o salir)."""
+        texto = _normalizar_localidad(mensaje).lower()
+
+        if any(p in texto for p in ["otro", "otra cotizacion", "otro cliente"]):
+            return self._reiniciar_cotizacion_vendedor(session)
+
+        if any(p in texto for p in ["si", "dale", "claro", "vamos", "bueno", "genial"]) and not any(
+            p in texto for p in ["no", "gracias"]
+        ):
+            return self._reiniciar_cotizacion_vendedor(session)
+
+        if any(p in texto for p in [
+            "no", "gracias", "nada", "termin", "eso es todo", "chau",
+            "hasta luego", "adios",
+        ]):
+            return self._salir_modo_vendedor(session)
+
+        return "¿Querés que cotice otro cliente o tenés alguna otra consulta?"
+
+    def _reiniciar_cotizacion_vendedor(self, session: UserSession) -> str:
+        """Prepara una nueva cotización de otro cliente sin salir del modo."""
+        session.lead = Lead(lead_id=session.lead.lead_id)
+        session.avanzar_etapa(EtapaConversacion.VENDEDOR_TIPO)
+        return (
+            "¡Genial! Decime: ¿la persona a cotizar es con recibo de "
+            "sueldo, monotributo o directo? ¿O solo tenés una consulta?"
+        )
+
+    def _salir_modo_vendedor(self, session: UserSession) -> str:
+        """Cierra el modo vendedor y vuelve al flujo de cliente."""
+        session.es_vendedor = False
+        session.lead = Lead(lead_id=session.lead.lead_id)
+        session.avanzar_etapa(EtapaConversacion.NUEVO)
+        return (
+            "¡Listo! Salí del modo vendedor 😊. Cuando quieras cotizar otro "
+            "cliente, escribime 'soy vendedor'."
+        )
+
+    # ─────────────────────────────────────────
     # Helpers
     # ─────────────────────────────────────────
 
-    def _datos_faltantes_para_cotizar(self, lead: Lead) -> list[str]:
-        """Lista los datos que faltan para poder cotizar."""
+    def _datos_faltantes_para_cotizar(
+        self, lead: Lead, vendedor: bool = False
+    ) -> list[str]:
+        """Lista los datos que faltan para poder cotizar.
+
+        Args:
+            lead: Lead con los datos ya recolectados.
+            vendedor: Si es True, la pregunta se redacta para una persona
+                distinta del usuario (ej: "¿cuántos años tiene la persona
+                a cotizar?" en lugar de "¿cuántos años tenés?").
+        """
         faltantes: list[str] = []
 
         if lead.localidad is None:
-            faltantes.append("de qué localidad sos")
+            faltantes.append(
+                "de qué localidad es la persona a cotizar" if vendedor
+                else "de qué localidad sos"
+            )
 
         if lead.edad is None:
-            faltantes.append("cuántos años tenés")
+            faltantes.append(
+                "cuántos años tiene la persona a cotizar" if vendedor
+                else "cuántos años tenés"
+            )
 
         if lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO:
             if lead.categoria_monotributo is None:
-                faltantes.append("en qué categoría de monotributo estás")
+                faltantes.append(
+                    "en qué categoría de monotributo está" if vendedor
+                    else "en qué categoría de monotributo estás"
+                )
 
         if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
             if not lead.tiene_recibo_sueldo:
-                faltantes.append("si tenés el recibo de sueldo a mano")
+                faltantes.append(
+                    "si tiene el recibo de sueldo a mano" if vendedor
+                    else "si tenés el recibo de sueldo a mano"
+                )
             elif not lead.conceptos_obra_social:
                 faltantes.append(
                     "los conceptos de obra social del recibo "
@@ -1271,6 +1659,10 @@ class ConversationManager:
 
     def _retorno_objetivo(self, session: UserSession) -> str:
         """Retoma el objetivo comercial según la etapa actual."""
+        # Modo vendedor: retomar el loop de cotizaciones para clientes.
+        if getattr(session, "es_vendedor", False):
+            return "¿Querés que cotice otro cliente o tenés alguna otra consulta?"
+
         lead = session.lead
         nombre = lead.nombre or ""
         etapa = session.etapa
@@ -1551,6 +1943,8 @@ class ConversationManager:
                                 session.etapa.value,
                             )
                             session.etapa = etapa_db
+                            if session.etapa in self._ETAPAS_VENDEDOR:
+                                session.es_vendedor = True
                         except ValueError:
                             logger.error(
                                 "[FLOW] DB_LOAD — user=%s, etapa_db='%s' "
