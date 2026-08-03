@@ -74,6 +74,8 @@ class UserSession:
         self.en_cotizacion: bool = False
         self.datos_cotizacion: dict = {}
         self._handler_ejecutado: str = "none"
+        # Archivos a enviar como respaldo tras la respuesta (ej: cartillas PDF).
+        self.adjuntos_pendientes: list[str] = []
 
     def actualizar_interaccion(self) -> None:
         """Registra la hora de la última interacción."""

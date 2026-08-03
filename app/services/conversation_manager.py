@@ -55,6 +55,8 @@ from app.services.knowledge_service import KnowledgeService
 from app.services.knowledge_engine import KnowledgeEngine
 from app.services.lead_scoring import LeadScoringService
 from app.services.servired_calculator import ServiredCalculator
+from app.services.cartilla_service import CartillaService
+from app.services.respuesta_bot import RespuestaBot
 from app.ai.service import AIService
 from app.database.database import get_engine, get_session_factory, crear_tablas
 from app.database.repository import ConversationRepository, LeadRepository
@@ -141,6 +143,11 @@ class ConversationManager:
         )
         logger.info("[CONVERSATION] PrestacionesService inicializado")
 
+        # CartillaService — resuelve el PDF de cartilla de plan/categoría
+        # para adjuntarlo como respaldo tras dar la información.
+        self._cartilla = CartillaService()
+        logger.info("[CONVERSATION] CartillaService inicializado")
+
     def procesar_mensaje(self, telegram_id: int, mensaje: str) -> str:
         """
         Procesa un mensaje del usuario y devuelve la respuesta de Sofía.
@@ -208,7 +215,15 @@ class ConversationManager:
             lead.estado_comercial.value, lead.score, lead.temperatura_lead,
         )
 
-        return respuesta
+        # Adjuntos de la respuesta (cartillas PDF como respaldo)
+        adjuntos = list(getattr(session, "adjuntos_pendientes", None) or [])
+        session.adjuntos_pendientes = []
+        if isinstance(respuesta, RespuestaBot):
+            adjuntos = list(respuesta.archivos_adjuntos) + adjuntos
+            respuesta = str(respuesta)
+        adjuntos = list(dict.fromkeys(adjuntos))
+
+        return RespuestaBot(respuesta, archivos_adjuntos=adjuntos)
 
     # ─────────────────────────────────────────
     # Enrutamiento
@@ -242,6 +257,13 @@ class ConversationManager:
         if respuesta_prestacion is not None:
             session._handler_ejecutado = "prestaciones"
             return respuesta_prestacion
+
+        # ── Saludo (humanizado) en etapas avanzadas ──
+        # Si el cliente saluda en medio de la conversación, respondemos acorde
+        # y retomamos el objetivo comercial sin cambiar la etapa.
+        if etapa != EtapaConversacion.NUEVO and self._es_saludo_puro(mensaje):
+            session._handler_ejecutado = "_handle_saludo"
+            return self._responder_saludo(session)
 
         # ── NUEVO: handler tradicional (saludo + extracción nombre) ──
         if etapa == EtapaConversacion.NUEVO:
@@ -507,9 +529,9 @@ class ConversationManager:
         # Sin nombre y sin intención comercial → quedarse en NUEVO y pedir nombre
         logger.debug("[LEAD] Esperando nombre de user=%s", session.telegram_id)
         return (
-            "¡Hola! Soy Sofía 😊, asesora de Servired. "
-            "Te voy a ayudar a encontrar la opción más conveniente para vos. "
-            "¿Cómo te llamás?"
+            "¡Hola! 😊 Qué lindo que te acerques. Soy Sofía, asesora de Servired. "
+            "Voy a ayudarte a encontrar la opción más conveniente para vos. "
+            "Contame, ¿Cómo te llamás?"
         )
 
     def _handle_returning(self, session: UserSession, mensaje: str) -> str:
@@ -903,7 +925,7 @@ class ConversationManager:
         return f"¿{faltantes[0].capitalize()}?"
 
     def _handle_cotizando(self, session: UserSession, mensaje: str) -> str:
-        """Genera la cotización y presenta los 3 planes con comparativa."""
+        """Genera la cotización y presenta los planes con beneficios reales."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.INTERESADO
 
@@ -921,9 +943,22 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
             nombre = lead.nombre or ""
             texto = f"¡Perfecto {nombre}! Tenemos 3 planes para vos:\n\n"
-            for i, plan in enumerate(["medimax", "medimax gold", "medimax co"], 1):
-                texto += f"{i}. *{plan.title()}* — {descripciones[plan]}\n"
-            texto += "\n¿Querés que te cuente más detalles de cada uno?"
+            for plan in ["medimax", "medimax gold", "medimax co"]:
+                texto += f"📋 *{plan.title()}*\n"
+                bullets = self._bullets_plan(plan, 4)
+                if bullets:
+                    for b in bullets:
+                        texto += f"   ✓ {b}\n"
+                else:
+                    texto += f"   {descripciones.get(plan, '')}\n"
+                texto += "\n"
+            texto += (
+                "¿Querés que te cuente más detalles de algún plan "
+                "o te parece bien alguno para avanzar?"
+            )
+            session.adjuntos_pendientes = self._adjuntos_planes(
+                ["medimax", "medimax gold", "medimax co"]
+            )
             return texto
 
         planes = ["medimax", "medimax gold", "medimax co"]
@@ -953,10 +988,15 @@ class ConversationManager:
             )
 
         texto = "*Estos son los planes disponibles para vos:*\n\n"
-        for i, r in enumerate(resultados, 1):
+        for r in resultados:
             texto += f"📋 *Plan {r.plan.title()}*\n"
-            texto += f"   {descripciones.get(r.plan, '')}\n"
             texto += f"   💰 *${r.valor_a_pagar:,.2f}/mes*\n"
+            bullets = self._bullets_plan(r.plan, 5)
+            if bullets:
+                for b in bullets:
+                    texto += f"   ✓ {b}\n"
+            else:
+                texto += f"   {descripciones.get(r.plan, '')}\n"
             if r.plan_joven_disponible:
                 texto += "   🎉 Plan Joven disponible\n"
             texto += "\n"
@@ -966,12 +1006,42 @@ class ConversationManager:
             "o te parece bien alguno para avanzar?"
         )
 
+        # Cartillas oficiales de los planes como respaldo (tras la info).
+        session.adjuntos_pendientes = self._adjuntos_planes([r.plan for r in resultados])
+
         logger.info(
             "[CONVERSATION] Cotización generada — user=%s, planes=%d",
             session.telegram_id, len(resultados),
         )
 
         return texto
+
+    def _bullets_plan(self, plan: str, limite: int = 6) -> list[str]:
+        """
+        Extrae los beneficios principales (bullets) de un plan desde la
+        cartilla oficial. Retorna hasta `limite` ítems.
+        """
+        detalle = self._detalle_plan(plan)
+        bullets: list[str] = []
+        for linea in detalle.splitlines():
+            s = linea.strip()
+            if s.startswith("-"):
+                limpia = s.lstrip("- ").strip()
+                if limpia:
+                    bullets.append(limpia)
+            if len(bullets) >= limite:
+                break
+        return bullets
+
+    def _adjuntos_planes(self, planes: list[str]) -> list[str]:
+        """PDFs de cartilla de los planes dados (solo rutas existentes)."""
+        cartilla = getattr(self, "_cartilla", None)
+        if cartilla is None:
+            return []
+        pdfs: list[str] = []
+        for plan in planes:
+            pdfs.extend(cartilla.plan_pdfs(plan))
+        return list(dict.fromkeys(pdfs))
 
     def _detectar_plan_mencionado(self, mensaje: str) -> str | None:
         """
@@ -1027,10 +1097,19 @@ class ConversationManager:
         }.get(plan, plan.replace("_", " ").title())
 
         if self._calculator is None:
-            return (
-                f"El *{nombre_mostrar}* es nuestro plan tope de gama. "
-                "¿Querés que te cuente más detalles?"
+            texto = f"*Plan {nombre_mostrar}*\n"
+            bullets = self._bullets_plan(plan, 8)
+            if bullets:
+                for b in bullets:
+                    texto += f"   ✓ {b}\n"
+            else:
+                texto += f"   {descripciones.get(plan, '')}\n"
+            texto += (
+                "\n¿Querés que avancemos con este plan "
+                "o necesitás que te cuente más detalles?"
             )
+            session.adjuntos_pendientes = self._adjuntos_plan(plan)
+            return texto
 
         resultado = self._calculator.cotizar(
             lead=lead,
@@ -1048,14 +1127,22 @@ class ConversationManager:
             )
 
         texto = f"*Plan {nombre_mostrar}*\n"
-        texto += f"   {descripciones.get(plan, '')}\n"
+        bullets = self._bullets_plan(plan, 8)
+        if bullets:
+            for b in bullets:
+                texto += f"   ✓ {b}\n"
+        else:
+            texto += f"   {descripciones.get(plan, '')}\n"
         texto += f"   💰 *${resultado.valor_a_pagar:,.2f}/mes*\n"
         if resultado.plan_joven_disponible:
             texto += "   🎉 Plan Joven disponible\n"
         texto += (
-            "\n¿Querés que te cuente más detalles de este plan "
-            "o te parece bien para avanzar?"
+            "\n¿Querés que avancemos con la afiliación de este plan "
+            "o necesitás más detalles?"
         )
+
+        # Cartilla oficial del plan como respaldo (tras la info).
+        session.adjuntos_pendientes = self._adjuntos_plan(plan)
 
         logger.info(
             "[CONVERSATION] Plan específico cotizado — user=%s, plan=%s",
@@ -1171,6 +1258,11 @@ class ConversationManager:
         retorno = self._retorno_objetivo(session)
         texto = f"{respuesta}\n\n{retorno}"
 
+        # Cartilla oficial correspondiente como respaldo (tras la info).
+        cartilla = getattr(self, "_cartilla", None)
+        if cartilla is not None:
+            session.adjuntos_pendientes = cartilla.categoria_pdfs(categoria, mensaje)
+
         logger.info(
             "[PRESTACIONES] user=%s, categoria=%s, respuesta=%d chars",
             session.telegram_id, categoria, len(texto),
@@ -1223,6 +1315,66 @@ class ConversationManager:
             "(relación de dependencia, monotributo o particular) "
             "y te armo la propuesta."
         )
+
+    # ─────────────────────────────────────────
+    # Saludos — humanización sin perder el objetivo comercial
+    # ─────────────────────────────────────────
+
+    _SALUDOS_PUROS = {
+        "hola", "hola sofia", "buenas", "buenos dias", "buen dia",
+        "buenas tardes", "buenas noches", "hola buenas", "hello", "hi", "hey",
+        "hola de nuevo", "hola nuevamente", "hola otra vez", "buenas de nuevo",
+        "hola como estas", "como estas", "como andas", "que tal", "holi",
+    }
+
+    def _es_saludo_puro(self, mensaje: str) -> bool:
+        """Detecta si el mensaje es un saludo simple (sin otro contenido)."""
+        import re
+
+        if not mensaje:
+            return False
+        texto = _normalizar_localidad(mensaje).lower()
+        texto = re.sub(r"[^a-z0-9 ]", " ", texto)
+        texto = " ".join(texto.split())
+        return texto in self._SALUDOS_PUROS
+
+    def _responder_saludo(self, session: UserSession) -> str:
+        """
+        Responde un saludo de un usuario que ya está en la conversación.
+
+        Humaniza (no suena a máquina) y retoma el objetivo comercial
+        según la etapa actual, sin cambiar la etapa.
+        """
+        lead = session.lead
+        nombre = lead.nombre or ""
+        saludo = f"¡Hola {nombre}!" if nombre else "¡Hola!"
+        retorno = self._retorno_objetivo(session)
+        return f"{saludo} 😊 {retorno}"
+
+    # ─────────────────────────────────────────
+    # Detalle de planes — información real de las cartillas
+    # ─────────────────────────────────────────
+
+    def _detalle_plan(self, plan: str) -> str:
+        """
+        Devuelve los beneficios reales de un plan desde las cartillas
+        oficiales (DB → markdown). Vacío si no hay sección disponible.
+        """
+        prestaciones = getattr(self, "_prestaciones", None)
+        if prestaciones is None:
+            return ""
+        try:
+            return prestaciones.detalle_plan(plan) or ""
+        except Exception as exc:
+            logger.warning("[CARTILLA] Error obteniendo detalle del plan %s: %s", plan, exc)
+            return ""
+
+    def _adjuntos_plan(self, plan: str) -> list[str]:
+        """PDFs de cartilla para adjuntar tras detallar un plan."""
+        cartilla = getattr(self, "_cartilla", None)
+        if cartilla is None:
+            return []
+        return cartilla.plan_pdfs(plan)
 
     def _obtener_knowledge_para_etapa(
         self, lead: Lead, etapa: EtapaConversacion, mensaje: str

@@ -147,6 +147,36 @@ class PrestacionesService:
         """Detecta la categoría de prestación en el mensaje (sin resolver contenido)."""
         return self._detectar_categoria(mensaje)
 
+    def detalle_plan(self, plan: str) -> str:
+        """
+        Devuelve la sección detallada de beneficios de un plan desde la
+        cartilla oficial (markdown → DB → web). Vacío si no hay sección.
+
+        Acepta claves con espacios o guiones bajos
+        (ej: "medimax_gold" o "medimax gold").
+        """
+        if not plan:
+            return ""
+        clave = plan.lower().strip().replace("_", " ").replace("-", " ")
+        clave = " ".join(clave.split())
+
+        # 1. Markdown oficial (contenido completo, sin truncar).
+        contenido = ""
+        if self._knowledge is not None:
+            try:
+                contenido = self._knowledge.obtener_beneficios_planes() or ""
+            except Exception as exc:
+                logger.warning("[PRESTACIONES] Error leyendo beneficios.md: %s", exc)
+
+        # 2. DB (si el markdown no está disponible).
+        if not contenido:
+            contenido = self._obtener_contenido("planes", f"que cubre el plan {clave}")
+
+        if not contenido:
+            return ""
+        seccion = self._extraer_seccion_plan(contenido, clave)
+        return seccion or ""
+
     # ─────────────────────────────────────────
     # Detección de categoría
     # ─────────────────────────────────────────

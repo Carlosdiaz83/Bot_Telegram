@@ -13,6 +13,7 @@ Flujo:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -89,6 +90,33 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         await update.message.reply_text(respuesta)
         logger.info("[TELEGRAM] Respuesta enviada a %s (id=%d)", nombre, telegram_id)
+
+        # Archivos adjuntos de respaldo (cartillas oficiales en PDF)
+        adjuntos = getattr(respuesta, "archivos_adjuntos", None) or []
+        for ruta_archivo in adjuntos:
+            try:
+                archivo = Path(ruta_archivo)
+                if not archivo.is_file():
+                    logger.warning(
+                        "[TELEGRAM] Adjunto no encontrado para %s (id=%d): %s",
+                        nombre, telegram_id, ruta_archivo,
+                    )
+                    continue
+                with open(archivo, "rb") as fh:
+                    await update.message.reply_document(
+                        document=fh,
+                        filename=archivo.name,
+                    )
+                logger.info(
+                    "[TELEGRAM] Adjunto enviado a %s (id=%d): %s",
+                    nombre, telegram_id, archivo.name,
+                )
+            except Exception as e:
+                logger.error(
+                    "[TELEGRAM] Error enviando adjunto a %s (id=%d): %s",
+                    nombre, telegram_id, str(e),
+                    exc_info=True,
+                )
 
     except Exception as e:
         logger.error(
