@@ -837,6 +837,10 @@ class ConversationManager:
                     "Un asesor especializado puede darte una atención más personalizada. "
                     "Dejame tu número y coordinamos una llamada."
                 )
+            if objecion.tipo == TipoObjecion.PRECIO:
+                respuesta_precio = self._respuesta_objeccion_precio(session, lead)
+                if respuesta_precio:
+                    return respuesta_precio
             respuesta_knowledge = self.knowledge.obtener_respuesta_objecion(mensaje)
             if respuesta_knowledge:
                 return f"{objecion.respuesta} {respuesta_knowledge}"
@@ -1093,7 +1097,7 @@ class ConversationManager:
         if "cordoba" not in _normalizar_localidad(lead.localidad):
             zona = "interior"
 
-        planes = ["medimax", "medimax gold", "medimax co"]
+        planes = ["gold", "medimax gold", "medimax"]
 
         session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
 
@@ -1190,6 +1194,38 @@ class ConversationManager:
             "¡Genial! Decime: ¿la persona a cotizar es con recibo de "
             "sueldo, monotributo o directo? ¿O solo tenés una consulta?"
         )
+
+    def _respuesta_objeccion_precio(self, session: UserSession, lead: Lead) -> str:
+        """Ante una objeción de precio, ofrece el plan económico Medimax Co."""
+        if self._calculator is None or lead.edad is None or not lead.localidad:
+            return ""
+
+        zona = "cordoba"
+        if "cordoba" not in _normalizar_localidad(lead.localidad):
+            zona = "interior"
+
+        resultado = self._calculator.cotizar(
+            lead=lead,
+            zona=zona,
+            nombre_plan="medimax co",
+            conceptos_obra_social=lead.conceptos_obra_social or None,
+        )
+        if not resultado or resultado.valor_plan_total <= 0:
+            return ""
+
+        session.adjuntos_pendientes = self._adjuntos_planes(["medimax co"])
+
+        nombre = lead.nombre or ""
+        texto = (
+            f"¡Entiendo {nombre}! Por eso tenemos *Medimax Co*, el plan "
+            "económico de Servired con las prestaciones esenciales al mejor "
+            f"precio: 💰 *${resultado.valor_a_pagar:,.2f}/mes*.\n\n"
+            "Es ideal si querés cuidar el presupuesto sin quedarte sin cobertura."
+        )
+        if resultado.plan_joven_disponible:
+            texto += "\n🎉 Plan Joven disponible"
+        texto += "\n¿Querés que te cuente más detalles de este plan?"
+        return texto
 
     def _salir_modo_vendedor(self, session: UserSession) -> str:
         """Cierra el modo vendedor y vuelve al flujo de cliente."""
@@ -1322,16 +1358,16 @@ class ConversationManager:
             zona = "interior"
 
         descripciones = {
-            "medimax": "Cobertura completa con consultas, estudios y odontología",
+            "gold": "Tope de gama con la máxima cobertura y sin coseguros",
             "medimax gold": "Cobertura premium con mayores prestaciones y mejores descuentos",
-            "medimax co": "Plan económico con las prestaciones esenciales al mejor precio",
+            "medimax": "Cobertura completa con consultas, estudios y odontología",
         }
 
         if self._calculator is None:
             session.avanzar_etapa(EtapaConversacion.PRESENTANDO_VALOR)
             nombre = lead.nombre or ""
             texto = f"¡Perfecto {nombre}! Tenemos 3 planes para vos:\n\n"
-            for plan in ["medimax", "medimax gold", "medimax co"]:
+            for plan in ["gold", "medimax gold", "medimax"]:
                 texto += f"📋 *{plan.title()}*\n"
                 bullets = self._bullets_plan(plan, 4)
                 if bullets:
@@ -1345,11 +1381,11 @@ class ConversationManager:
                 "o te parece bien alguno para avanzar?"
             )
             session.adjuntos_pendientes = self._adjuntos_planes(
-                ["medimax", "medimax gold", "medimax co"]
+                ["gold", "medimax gold", "medimax"]
             )
             return texto
 
-        planes = ["medimax", "medimax gold", "medimax co"]
+        planes = ["gold", "medimax gold", "medimax"]
         resultados = []
         for plan in planes:
             resultado = self._calculator.cotizar(
