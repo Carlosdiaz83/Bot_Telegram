@@ -189,7 +189,7 @@ class TestConsultaVendedor:
         session = manager.session_manager.get(tid)
 
         assert "coseguro" in respuesta.lower()
-        assert "Sin coseguros en prestadores de cartilla" in respuesta
+        assert "Clínica del Sol" in respuesta
         assert "otro cliente" in respuesta
         assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
 

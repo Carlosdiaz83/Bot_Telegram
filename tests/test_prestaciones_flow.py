@@ -114,6 +114,42 @@ class TestContenidoReal:
         assert cat == "planes"
         assert "sin coseguro" in respuesta.lower()
 
+    def test_coseguro_detecta_categoria(self, service):
+        respuesta, cat = service.responder("el plan medimax tiene coseguro?")
+        assert cat == "coseguros"
+        assert "Clínica del Sol" in respuesta
+        assert "Hospital Italiano" in respuesta
+
+    def test_coseguro_medimax_gold_rel_dependencia(self, service):
+        """Fiel al Excel: Rel. de dependencia → coseguro en 4 prestadores."""
+        respuesta, cat = service.responder(
+            "el plan medimax gold tiene coseguro?",
+            tipo_afiliacion=TipoAfiliacion.RELACION_DEPENDENCIA,
+        )
+        assert cat == "coseguros"
+        assert "Sanatorio Allende" in respuesta
+        assert "Hospital Privado" in respuesta
+        assert "Clínica del Sol" in respuesta
+        assert "solo con coseguro en Sanatorio Allende" not in respuesta
+
+    def test_coseguro_medimax_gold_particular(self, service):
+        """Fiel al Excel: Particular → coseguro solo en Allende y Hospital Privado."""
+        respuesta, cat = service.responder(
+            "el plan medimax gold tiene coseguro?",
+            tipo_afiliacion=TipoAfiliacion.PARTICULAR,
+        )
+        assert cat == "coseguros"
+        assert "Sanatorio Allende" in respuesta
+        assert "Hospital Privado" in respuesta
+        assert "Clínica del Sol" not in respuesta
+
+    def test_coseguro_medimax_gold_sin_tipo_muestra_variantes(self, service):
+        """Sin tipo de afiliación: se muestran todas las variantes (no inventa)."""
+        respuesta, cat = service.responder("el medimax gold tiene copagos?")
+        assert cat == "coseguros"
+        assert "Relación de dependencia" in respuesta
+        assert "Particular" in respuesta
+
     def test_sin_dato_no_responde(self, service):
         assert service.responder("cuanto cuesta?") is None
 

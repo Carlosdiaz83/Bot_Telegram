@@ -130,7 +130,7 @@ class CartillaService:
         - "odontologia"/"farmacias": PDF de la cartilla de esa categoría.
         - Otras categorías sin cartilla: lista vacía.
         """
-        if categoria == "planes":
+        if categoria in ("planes", "coseguros"):
             plan = self._plan_en_mensaje(mensaje)
             if plan:
                 return self.plan_pdfs(plan)

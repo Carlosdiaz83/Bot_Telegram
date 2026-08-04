@@ -1713,7 +1713,11 @@ class ConversationManager:
         para que la conversación continúe con el flujo normal.
         """
         try:
-            resultado = self._prestaciones.responder(mensaje)
+            tipo_lead = None
+            lead = getattr(session, "lead", None)
+            if lead is not None and getattr(lead, "tipo_afiliacion", None) is not None:
+                tipo_lead = lead.tipo_afiliacion.value
+            resultado = self._prestaciones.responder(mensaje, tipo_afiliacion=tipo_lead)
         except Exception as exc:
             logger.warning("[PRESTACIONES] Error analizando: %s", exc)
             return None

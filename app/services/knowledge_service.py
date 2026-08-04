@@ -148,6 +148,10 @@ class KnowledgeService:
         """Retorna los beneficios reales de los planes (cartillas oficiales)."""
         return self._cargar_archivo_ruta_relativa("planes/beneficios.md")
 
+    def obtener_coseguros_planes(self) -> str:
+        """Retorna la info de coseguros por plan (Excel de precios oficial)."""
+        return self._cargar_archivo_ruta_relativa("planes/coseguros.md")
+
     def obtener_red_medica(self) -> str:
         """Retorna el resumen de la red de prestadores médicos."""
         return self._cargar_archivo_ruta_relativa("prestadores/red_medica.md")

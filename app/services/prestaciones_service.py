@@ -81,6 +81,8 @@ class PrestacionesService:
             "qué beneficios", "que beneficios", "qué cobertura", "que cobertura",
             "beneficios del plan", "incluye el plan", "cubre el plan",
             "cobertura de los planes", "qué tiene el", "que tiene el",
+        ],
+        "coseguros": [
             "coseguro", "coseguros", "copago", "copagos",
         ],
     }
@@ -96,13 +98,15 @@ class PrestacionesService:
         "internacion": "obtener_beneficios_planes",
         "salud_mental": "obtener_beneficios_planes",
         "planes": "obtener_beneficios_planes",
+        "coseguros": "obtener_coseguros_planes",
     }
 
     # ── Orden de prioridad para evitar falsos positivos ──
     # Las categorías más específicas se evalúan primero.
     _ORDEN = [
         "odontologia", "farmacias", "opticas", "salud_mental",
-        "emergencias", "internacion", "coberturas", "prestadores", "planes",
+        "emergencias", "internacion", "coberturas", "prestadores",
+        "coseguros", "planes",
     ]
 
     def __init__(
@@ -119,9 +123,14 @@ class PrestacionesService:
     # API pública
     # ─────────────────────────────────────────
 
-    def responder(self, mensaje: str) -> tuple[str, str] | None:
+    def responder(self, mensaje: str, tipo_afiliacion: Optional[str] = None) -> tuple[str, str] | None:
         """
         Responde una pregunta sobre prestaciones si la detecta.
+
+        Args:
+            mensaje: Texto de la pregunta del usuario.
+            tipo_afiliacion: Tipo de afiliación del lead (para filtrar
+                la variante de coseguro correcta cuando aplica).
 
         Returns:
             Tupla (respuesta, categoria) o None si no hay pregunta
@@ -138,7 +147,7 @@ class PrestacionesService:
         if not contenido:
             return None
 
-        respuesta = self._formatear(categoria, contenido, mensaje)
+        respuesta = self._formatear(categoria, contenido, mensaje, tipo_afiliacion)
         if not respuesta:
             return None
 
@@ -266,6 +275,7 @@ class PrestacionesService:
         "internacion": "Los planes incluyen cirugías e internaciones clínicas.",
         "salud_mental": "Sí, los planes cubren salud mental (psicología y psiquiatría).",
         "planes": "Estos son los beneficios que incluyen los planes SERVIRED:",
+        "coseguros": "Sobre los coseguros de los planes SERVIRED (según precios oficiales):",
     }
 
     # ── Búsqueda de la prestación puntual dentro de los beneficios de planes ──
@@ -279,14 +289,17 @@ class PrestacionesService:
         "farmacias": ["red médica, farmacéutica", "farmacéutica"],
     }
 
-    def _formatear(self, categoria: str, contenido: str, mensaje: str) -> str:
+    def _formatear(self, categoria: str, contenido: str, mensaje: str,
+                   tipo_afiliacion: Optional[str] = None) -> str:
         # Si pregunta por un plan específico, extraer su sección del contenido crudo
         plan = self._plan_mencionado(mensaje)
-        if plan and categoria in ("planes", "coberturas", "internacion",
+        if plan and categoria in ("planes", "coseguros", "coberturas", "internacion",
                                   "emergencias", "salud_mental", "opticas"):
             seccion = self._extraer_seccion_plan(contenido, plan)
             if seccion:
                 intro = self._INTROS.get(categoria, "")
+                if categoria == "coseguros" and tipo_afiliacion:
+                    seccion = self._filtrar_coseguro_por_tipo(seccion, tipo_afiliacion)
                 return f"{intro}\n{seccion}"
 
         texto = self._limpiar_markdown(contenido)
@@ -299,6 +312,34 @@ class PrestacionesService:
                 return f"{intro} {puntual}"
 
         return self._primer_parrafo(texto, categoria)
+
+    def _filtrar_coseguro_por_tipo(self, seccion: str, tipo_afiliacion: str) -> str:
+        """Filtra la sección de coseguros según el tipo de afiliación del lead.
+
+        El markdown de coseguros lista una línea por tipo de afiliación.
+        Si no encontramos la variante, devolvemos la sección completa para
+        no inventar datos.
+        """
+        import re
+
+        tipo_norm = re.sub(r"\s+", " ", str(tipo_afiliacion or "").strip().lower())
+        etiquetas: list[str] = []
+        if "relacion_dependencia" in tipo_norm:
+            etiquetas = ["relacion de dependencia", "relación de dependencia"]
+        elif "monotributo" in tipo_norm:
+            etiquetas = ["monotributo"]
+        elif "particular" in tipo_norm:
+            etiquetas = ["particular"]
+
+        if not etiquetas:
+            return seccion
+
+        for linea in seccion.splitlines():
+            linea_limpia = linea.strip()
+            for etiqueta in etiquetas:
+                if etiqueta in linea_limpia.lower():
+                    return linea_limpia
+        return seccion
 
     def _buscar_beneficio(self, texto: str, keywords: list[str]) -> str:
         """Busca la línea del beneficio que coincide con las keywords."""
