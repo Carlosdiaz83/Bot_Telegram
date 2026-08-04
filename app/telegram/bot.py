@@ -16,9 +16,16 @@ import sys
 import threading
 
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    Application,
+    ChatMemberHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from app.config.settings import BotConfig
+from app.telegram.group_listener import GroupListener
 from app.telegram.handlers import handle_message, handle_start
 
 logger = logging.getLogger(__name__)
@@ -57,6 +64,23 @@ class TelegramBot:
 
     def _register_handlers(self, application: Application) -> None:
         """Registra todos los handlers en la aplicación."""
+        # Escucha de grupos: detecta alta/baja del bot y mensajes relevantes.
+        # Debe registrarse ANTES del handler genérico para que los mensajes
+        # de grupo no entren al flujo privado.
+        listener = GroupListener()
+        application.add_handler(
+            ChatMemberHandler(
+                listener.handle_my_chat_member,
+                chat_member_types=ChatMemberHandler.MY_CHAT_MEMBER,
+            )
+        )
+        application.add_handler(
+            MessageHandler(
+                filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND,
+                listener.handle_group_message,
+            )
+        )
+
         application.add_handler(CommandHandler("start", handle_start))
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
@@ -164,7 +188,7 @@ class TelegramBot:
         try:
             self._application.run_polling(
                 drop_pending_updates=True,
-                allowed_updates=["message", "callback_query"],
+                allowed_updates=["message", "callback_query", "my_chat_member"],
                 stop_signals=stop_signals,
             )
             logger.info("run_polling() finalizó normalmente")
@@ -192,7 +216,7 @@ class TelegramBot:
             )
             await self._application.bot.set_webhook(
                 url=webhook_url,
-                allowed_updates=["message", "callback_query"],
+                allowed_updates=["message", "callback_query", "my_chat_member"],
             )
             logger.info("[TELEGRAM] Webhook registrado: %s", webhook_url)
         else:

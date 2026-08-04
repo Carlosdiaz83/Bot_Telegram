@@ -279,6 +279,41 @@ class ServiredAportesMonotributoDB(Base):
         )
 
 
+class GrupoTelegramDB(Base):
+    """
+    Grupos de Telegram donde Sofía está presente.
+
+    Se registran automáticamente cuando el bot es agregado a un grupo
+    (update my_chat_member) y se desactivan cuando es removido. Los
+    ganchos automáticos y la escucha de conversaciones se limitan a
+    estos grupos.
+    """
+
+    __tablename__ = "grupos_telegram"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_id = Column(Integer, unique=True, nullable=False, index=True)
+    titulo = Column(String(200), nullable=True)
+    activo = Column(Boolean, default=True, nullable=False, index=True)
+    creado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    actualizado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<GrupoTelegramDB(id={self.id}, chat_id={self.chat_id}, "
+            f"titulo={self.titulo}, activo={self.activo})>"
+        )
+
+
 class TrainingSessionDB(Base):
     """
     Modelo persistente de sesión de entrenamiento.

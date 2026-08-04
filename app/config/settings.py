@@ -16,6 +16,26 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 
+def _parse_group_ids(valor: str) -> tuple[int, ...]:
+    """Parsea una lista de chat_id de grupos separados por comas."""
+    ids: list[int] = []
+    for parte in valor.split(","):
+        parte = parte.strip()
+        if parte.lstrip("-").isdigit():
+            ids.append(int(parte))
+    return tuple(ids)
+
+
+def _parse_horarios(valor: str) -> tuple[str, ...]:
+    """Parsea horarios 'HH:MM' separados por comas, ordenados."""
+    horarios: set[str] = set()
+    for parte in valor.split(","):
+        parte = parte.strip()
+        if len(parte) == 5 and parte[2] == ":":
+            horarios.add(parte)
+    return tuple(sorted(horarios))
+
+
 @dataclass(frozen=True)
 class BotConfig:
     """
@@ -40,6 +60,12 @@ class BotConfig:
     log_level: str = "INFO"
     telegram_webhook: bool = False
     webhook_base_url: str = ""
+    # Grupos de Telegram donde el bot publica ganchos y escucha conversaciones.
+    telegram_group_chat_ids: tuple[int, ...] = ()
+    # Ganchos automáticos 4 veces al día en los grupos (08:30/13:00/18:30/21:30
+    # hora de Córdoba). Desactivar con TELEGRAM_GROUP_HOOKS=false.
+    grupo_hooks_habilitado: bool = True
+    grupo_hooks_horarios: tuple[str, ...] = ("08:30", "13:00", "18:30", "21:30")
 
     @classmethod
     def from_env(cls, env_path: Path | None = None) -> BotConfig:
@@ -76,8 +102,15 @@ class BotConfig:
             app_env=os.getenv("APP_ENV", "development"),
             app_debug=os.getenv("APP_DEBUG", "false").lower() in ("true", "1", "yes"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
-            telegram_webhook=os.getenv(
-                "TELEGRAM_WEBHOOK", "false"
-            ).lower() in ("true", "1", "yes"),
-            webhook_base_url=os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/"),
-        )
+        telegram_webhook=os.getenv(
+            "TELEGRAM_WEBHOOK", "false"
+        ).lower() in ("true", "1", "yes"),
+        webhook_base_url=os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/"),
+        telegram_group_chat_ids=_parse_group_ids(os.getenv("TELEGRAM_GROUP_CHAT_IDS", "")),
+        grupo_hooks_habilitado=os.getenv(
+            "TELEGRAM_GROUP_HOOKS", "true"
+        ).lower() in ("true", "1", "yes"),
+        grupo_hooks_horarios=_parse_horarios(
+            os.getenv("TELEGRAM_GROUP_HOOK_HORARIOS", "08:30,13:00,18:30,21:30")
+        ),
+    )

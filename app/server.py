@@ -30,6 +30,7 @@ _config: BotConfig | None = None
 _telegram_thread: threading.Thread | None = None
 _telegram_bot = None
 _webhook_ready = False
+_group_scheduler = None
 
 
 def _run_telegram_bot(config: BotConfig) -> None:
@@ -64,7 +65,7 @@ def _run_telegram_bot(config: BotConfig) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle: inicia el bot de Telegram al arrancar."""
-    global _config, _telegram_thread, _telegram_bot, _webhook_ready
+    global _config, _telegram_thread, _telegram_bot, _webhook_ready, _group_scheduler
 
     logger.info("=== Lifespan iniciado ===")
     logger.info("Main thread: %s", threading.current_thread().name)
@@ -128,10 +129,44 @@ async def lifespan(app: FastAPI):
         else:
             logger.error("[TELEGRAM] ❌ Hilo murió después de 1 segundo — revisar logs anteriores")
 
+    # Scheduler de ganchos automáticos en grupos (4 veces al día).
+    if _config.grupo_hooks_habilitado:
+        try:
+            from app.telegram.group_hooks import GroupHookScheduler
+
+            username = ""
+            try:
+                username = _telegram_bot._application.bot.username or ""
+            except Exception:
+                pass
+
+            _group_scheduler = GroupHookScheduler(
+                token=_config.telegram_token,
+                group_chat_ids=_config.telegram_group_chat_ids,
+                horarios=_config.grupo_hooks_horarios,
+                habilitado=True,
+                username=username,
+            )
+            _group_scheduler.iniciar()
+            logger.info(
+                "[HOOKS] Scheduler de ganchos iniciado (grupos=%s, horarios=%s)",
+                _config.telegram_group_chat_ids,
+                ", ".join(_config.grupo_hooks_horarios),
+            )
+        except Exception as exc:
+            logger.error("[HOOKS] No se pudo iniciar scheduler: %s", exc, exc_info=True)
+    else:
+        logger.info("[HOOKS] Ganchos de grupos desactivados (TELEGRAM_GROUP_HOOKS=false)")
+
     yield
 
     # Apagado
     logger.info("Apagando aplicación...")
+    try:
+        if _group_scheduler is not None:
+            await _group_scheduler.detener()
+    except Exception as exc:
+        logger.error("[HOOKS] Error deteniendo scheduler: %s", exc)
     try:
         if _webhook_ready and _telegram_bot is not None:
             await _telegram_bot.stop_webhook()
