@@ -178,7 +178,10 @@ def bootstrap_datos(db: Session) -> dict:
     """
     Verifica y completa los datos esenciales de la DB.
 
-    Importa precios/aportes/knowledge solo si las tablas están vacías.
+    Importa precios y aportes desde servired_knowledge/ con upsert
+    idempotente en cada arranque (mantiene los datos al día sin duplicar).
+    El knowledge se ingesta solo si falta, con re-ingesta idempotente
+    de los markdowns de prestaciones.
 
     Returns:
         Dict con el estado resultante: {precios, aportes, knowledge}.
@@ -188,20 +191,32 @@ def bootstrap_datos(db: Session) -> dict:
     estado: dict = {"precios": 0, "aportes": 0, "knowledge": 0}
 
     try:
+        # Re-importar SIEMPRE (upsert idempotente): así los cambios de precios
+        # en servired_knowledge/ se propagan a producción en cada deploy, en
+        # lugar de quedarse con datos viejos de la primera importación.
         if _tabla_vacia(db, "servired_prices"):
             estado["precios"] = _importar_precios(db)
         else:
+            importados = _importar_precios(db)
             estado["precios"] = len(PriceRepository(db).buscar_todos())
-            logger.info("[BOOTSTRAP] Tabla de precios ya poblada (%d)", estado["precios"])
+            logger.info(
+                "[BOOTSTRAP] Precios re-importados: %d procesados (total activos %d)",
+                importados, estado["precios"],
+            )
     except Exception as exc:
         logger.error("[BOOTSTRAP] Error importando precios: %s", exc)
 
     try:
+        # Igual que precios: re-importar siempre para mantener los aportes al día.
         if _tabla_vacia(db, "servired_aportes_monotributo"):
             estado["aportes"] = _importar_aportes(db)
         else:
+            importados = _importar_aportes(db)
             estado["aportes"] = len(AportesMonotributoRepository(db).buscar_todos())
-            logger.info("[BOOTSTRAP] Tabla de aportes ya poblada (%d)", estado["aportes"])
+            logger.info(
+                "[BOOTSTRAP] Aportes re-importados: %d procesados (total activos %d)",
+                importados, estado["aportes"],
+            )
     except Exception as exc:
         logger.error("[BOOTSTRAP] Error importando aportes: %s", exc)
 
