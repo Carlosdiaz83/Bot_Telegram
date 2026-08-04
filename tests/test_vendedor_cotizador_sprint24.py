@@ -169,6 +169,68 @@ class TestConsultaVendedor:
             "ODONTO" in Path(p).name for p in respuesta.archivos_adjuntos
         )
 
+    def test_tengo_una_consulta_avanza_a_etapa_consulta(self, manager):
+        tid = 5023
+        manager.procesar_mensaje(tid, "soy vendedor")
+        respuesta = manager.procesar_mensaje(tid, "tengo una consulta")
+        session = manager.session_manager.get(tid)
+
+        assert "Decime tu consulta" in respuesta
+        assert session.etapa == EtapaConversacion.VENDEDOR_CONSULTA
+
+    def test_consulta_coseguro_responde_con_dato_real(self, manager):
+        """Regresión: 'el plan medimax tiene coseguro?' ya no entra en bucle
+        pidiendo el tipo de afiliación, sino que responde el dato real y
+        retoma el loop de cotización."""
+        tid = 5024
+        manager.procesar_mensaje(tid, "soy vendedor")
+        manager.procesar_mensaje(tid, "tengo una consulta")
+        respuesta = manager.procesar_mensaje(tid, "el plan medimax tiene coseguro?")
+        session = manager.session_manager.get(tid)
+
+        assert "coseguro" in respuesta.lower()
+        assert "Sin coseguros en prestadores de cartilla" in respuesta
+        assert "otro cliente" in respuesta
+        assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
+
+    def test_consulta_tras_cotizacion_no_se_pierde(self, manager):
+        """Regresión: tras cotizar un cliente, una consulta libre se atiende
+        en lugar de repetir '¿Querés que cotice otro cliente...?'."""
+        tid = 5025
+        _flujo_completo_monotributo(manager, tid)
+        respuesta = manager.procesar_mensaje(tid, "tengo una consulta")
+        session = manager.session_manager.get(tid)
+
+        assert "Decime tu consulta" in respuesta
+        assert session.etapa == EtapaConversacion.VENDEDOR_CONSULTA
+
+        respuesta = manager.procesar_mensaje(tid, "¿el plan medimax gold tiene copagos?")
+        assert "coseguro" in respuesta.lower()
+        session = manager.session_manager.get(tid)
+        assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
+
+    def test_consulta_general_sin_dato_vuelve_al_loop(self, manager):
+        tid = 5026
+        manager.procesar_mensaje(tid, "soy vendedor")
+        manager.procesar_mensaje(tid, "tengo una consulta")
+        respuesta = manager.procesar_mensaje(tid, "¿cómo facturan a las empresas?")
+        session = manager.session_manager.get(tid)
+
+        assert "otro cliente" in respuesta
+        assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
+
+    def test_consulta_luego_cotizar_otro_cliente(self, manager):
+        tid = 5027
+        manager.procesar_mensaje(tid, "soy vendedor")
+        manager.procesar_mensaje(tid, "tengo una consulta")
+        manager.procesar_mensaje(tid, "el plan medimax tiene coseguro?")
+        respuesta = manager.procesar_mensaje(tid, "sí, otro cliente")
+        session = manager.session_manager.get(tid)
+
+        assert session.etapa == EtapaConversacion.VENDEDOR_TIPO
+        assert session.es_vendedor is True
+        assert "recibo de sueldo" in respuesta
+
 
 # ─────────────────────────────────────────
 # Loop de otro cliente y salida

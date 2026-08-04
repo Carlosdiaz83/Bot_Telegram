@@ -91,6 +91,7 @@ class ConversationManager:
     _ETAPAS_VENDEDOR = frozenset({
         EtapaConversacion.VENDEDOR_BIENVENIDA,
         EtapaConversacion.VENDEDOR_TIPO,
+        EtapaConversacion.VENDEDOR_CONSULTA,
         EtapaConversacion.VENDEDOR_DATOS,
         EtapaConversacion.VENDEDOR_COTIZANDO,
     })
@@ -284,11 +285,13 @@ class ConversationManager:
         # ── Preguntas sobre prestaciones (TODA la conversación) ──
         # Si el cliente pregunta por un beneficio/cartilla/prestación específica,
         # respondemos con datos reales (DB → markdown → web oficial) y retomamos
-        # el objetivo comercial.
-        respuesta_prestacion = self._responder_pregunta_prestacion(session, mensaje)
-        if respuesta_prestacion is not None:
-            session._handler_ejecutado = "prestaciones"
-            return respuesta_prestacion
+        # el objetivo comercial. En VENDEDOR_CONSULTA la consulta se resuelve en
+        # _handle_vendedor_consulta para poder volver al loop de cotización.
+        if etapa != EtapaConversacion.VENDEDOR_CONSULTA:
+            respuesta_prestacion = self._responder_pregunta_prestacion(session, mensaje)
+            if respuesta_prestacion is not None:
+                session._handler_ejecutado = "prestaciones"
+                return respuesta_prestacion
 
         # ── Saludo (humanizado) en etapas avanzadas ──
         # Si el cliente saluda en medio de la conversación, respondemos acorde
@@ -918,6 +921,8 @@ class ConversationManager:
             return self._handle_vendedor_bienvenida(session, mensaje)
         if etapa == EtapaConversacion.VENDEDOR_TIPO:
             return self._handle_vendedor_tipo(session, mensaje)
+        if etapa == EtapaConversacion.VENDEDOR_CONSULTA:
+            return self._handle_vendedor_consulta(session, mensaje)
         if etapa == EtapaConversacion.VENDEDOR_DATOS:
             return self._handle_vendedor_datos(session, mensaje)
         if etapa == EtapaConversacion.VENDEDOR_COTIZANDO:
@@ -995,11 +1000,41 @@ class ConversationManager:
             "consulta", "pregunta", "duda", "información", "info",
             "otra consulta", "quería saber",
         ]):
+            session.avanzar_etapa(EtapaConversacion.VENDEDOR_CONSULTA)
             return "¡Claro! Decime tu consulta y te ayudo 😊"
 
         return (
             "Perfecto, necesito saber si la persona a cotizar es con recibo "
             "de sueldo, monotributo o directo. ¿O solo tenés una consulta?"
+        )
+
+    def _handle_vendedor_consulta(self, session: UserSession, mensaje: str) -> str:
+        """Responde la consulta libre del vendedor y retoma el loop de cotización."""
+        texto = _normalizar_localidad(mensaje).lower()
+
+        # Si en realidad quiere salir o cotizar otro cliente, reenrutar.
+        if self._es_salir_vendedor(mensaje):
+            return self._salir_modo_vendedor(session)
+        if any(p in texto for p in ["otro cliente", "otra cotizacion", "otro"]):
+            return self._reiniciar_cotizacion_vendedor(session)
+
+        # Si empieza a dar el tipo de afiliación, reenrutar a la cotización.
+        if self._detectar_tipo_cotizacion(mensaje) is not None:
+            session.avanzar_etapa(EtapaConversacion.VENDEDOR_TIPO)
+            return self._handle_vendedor_tipo(session, mensaje)
+
+        # Responder la consulta con conocimiento real (prestaciones → DB/markdown/web).
+        respuesta = self._responder_pregunta_prestacion(session, mensaje)
+        if respuesta is not None:
+            session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
+            return respuesta
+
+        # Consulta general sin dato específico: reconocer y retomar el objetivo.
+        session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
+        return (
+            "¡Entendido! No tengo esa información específica a mano ahora "
+            "mismo, pero la podés consultar en Servired al 0800-xxx-xxxx. "
+            "¿Querés que cotice otro cliente o tenés alguna otra consulta?"
         )
 
     def _handle_vendedor_datos(self, session: UserSession, mensaje: str) -> str:
@@ -1183,6 +1218,14 @@ class ConversationManager:
             "hasta luego", "adios",
         ]):
             return self._salir_modo_vendedor(session)
+
+        # Consulta libre: pasar al modo consulta para atenderla sin perderse.
+        if any(p in texto for p in [
+            "consulta", "pregunta", "duda", "información", "info",
+            "quería saber", "tengo una consulta",
+        ]):
+            session.avanzar_etapa(EtapaConversacion.VENDEDOR_CONSULTA)
+            return "¡Claro! Decime tu consulta y te ayudo 😊"
 
         return "¿Querés que cotice otro cliente o tenés alguna otra consulta?"
 

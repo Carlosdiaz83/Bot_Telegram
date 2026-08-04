@@ -81,6 +81,7 @@ class PrestacionesService:
             "qué beneficios", "que beneficios", "qué cobertura", "que cobertura",
             "beneficios del plan", "incluye el plan", "cubre el plan",
             "cobertura de los planes", "qué tiene el", "que tiene el",
+            "coseguro", "coseguros", "copago", "copagos",
         ],
     }
 

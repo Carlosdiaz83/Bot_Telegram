@@ -42,6 +42,7 @@ class EtapaConversacion(str, Enum):
     # Modo vendedor: cotizaciones para clientes
     VENDEDOR_BIENVENIDA = "vendedor_bienvenida"
     VENDEDOR_TIPO = "vendedor_tipo"
+    VENDEDOR_CONSULTA = "vendedor_consulta"
     VENDEDOR_DATOS = "vendedor_datos"
     VENDEDOR_COTIZANDO = "vendedor_cotizando"
 
