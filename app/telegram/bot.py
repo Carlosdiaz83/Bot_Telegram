@@ -26,7 +26,12 @@ from telegram.ext import (
 
 from app.config.settings import BotConfig
 from app.telegram.group_listener import GroupListener
-from app.telegram.handlers import handle_message, handle_start
+from app.telegram.handlers import (
+    handle_document,
+    handle_message,
+    handle_photo,
+    handle_start,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +87,14 @@ class TelegramBot:
         )
 
         application.add_handler(CommandHandler("start", handle_start))
+        application.add_handler(
+            MessageHandler(
+                filters.Document.ALL & ~filters.COMMAND, handle_document
+            )
+        )
+        application.add_handler(
+            MessageHandler(filters.PHOTO, handle_photo)
+        )
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
         )

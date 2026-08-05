@@ -84,6 +84,8 @@ class UserSession:
         self.adjuntos_pendientes: list[str] = []
         # Modo vendedor: el usuario cotiza para sus clientes en lugar de para sí mismo.
         self.es_vendedor: bool = False
+        # Ruta local del último archivo recibido (recibo de sueldo en foto o PDF).
+        self.recibo_ruta: str | None = None
 
     def actualizar_interaccion(self) -> None:
         """Registra la hora de la última interacción."""

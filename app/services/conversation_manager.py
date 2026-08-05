@@ -17,6 +17,7 @@ Uso:
 
 from __future__ import annotations
 
+import difflib
 import logging
 from typing import Any, Optional
 
@@ -77,6 +78,29 @@ def _normalizar_localidad(localidad: Optional[str]) -> str:
     }
     texto = localidad.lower()
     return "".join(acentos.get(c, c) for c in texto)
+
+
+def _coincide_clave(texto: str, clave: str, umbral: float = 0.82) -> bool:
+    """¿`clave` aparece en `texto`, tolerando errores de tipeo leves?
+
+    Usa coincidencia difusa (SequenceMatcher) por palabra para aceptar
+    typos como "reecibo" -> "recibo" (ratio ~0.92), sin confundirse con
+    otras claves ("reecibo" vs "directo" es ~0.57).
+    """
+    if not texto or not clave:
+        return False
+    if clave in texto:
+        return True
+    palabras = texto.split()
+    return any(
+        difflib.SequenceMatcher(None, palabra, clave).ratio() >= umbral
+        for palabra in palabras
+    )
+
+
+def _coincide_alguna(texto: str, claves, umbral: float = 0.82) -> bool:
+    """¿Alguna de las claves aparece en `texto` (con tolerancia a typos)?"""
+    return any(_coincide_clave(texto, clave, umbral) for clave in claves)
 
 
 class ConversationManager:
@@ -257,6 +281,106 @@ class ConversationManager:
         adjuntos = list(dict.fromkeys(adjuntos))
 
         return RespuestaBot(respuesta, archivos_adjuntos=adjuntos)
+
+    # ─────────────────────────────────────────
+    # Archivos (recibo de sueldo en foto o PDF)
+    # ─────────────────────────────────────────
+
+    def procesar_documento(
+        self,
+        telegram_id: int,
+        ruta_archivo: str,
+        nombre_archivo: str = "",
+    ) -> str:
+        """Procesa un archivo enviado por el usuario como recibo de sueldo.
+
+        Acepta una foto o un PDF como confirmación de que la persona a
+        cotizar tiene recibo de sueldo. Se almacena la ruta del archivo
+        en la sesión y se retoma la recolección de datos que faltan
+        (edad, localidad, conceptos de obra social) o se cotiza.
+        """
+        session = self.session_manager.get_or_create(telegram_id)
+        if self._db_enabled:
+            self._cargar_lead_desde_db(telegram_id, session)
+
+        lead = session.lead
+        es_vendedor = session.es_vendedor or session.etapa in self._ETAPAS_VENDEDOR
+        if es_vendedor:
+            session.es_vendedor = True
+
+        # El archivo se interpreta como el recibo de sueldo.
+        session.recibo_ruta = ruta_archivo
+        if lead.tipo_afiliacion is None:
+            lead.tipo_afiliacion = TipoAfiliacion.RELACION_DEPENDENCIA
+        lead.tiene_recibo_sueldo = True
+
+        # Si es PDF, intentar extraer conceptos de obra social del texto.
+        if not lead.conceptos_obra_social and ruta_archivo.lower().endswith(".pdf"):
+            conceptos = self._extraer_conceptos_pdf(ruta_archivo)
+            if conceptos:
+                lead.conceptos_obra_social = conceptos
+                logger.info(
+                    "[DOCUMENTO] Conceptos extraídos del PDF — user=%s: %s",
+                    telegram_id, conceptos,
+                )
+
+        logger.info(
+            "[DOCUMENTO] Recibo aceptado — user=%s, archivo=%s, vendedor=%s",
+            telegram_id, nombre_archivo or ruta_archivo, es_vendedor,
+        )
+
+        if es_vendedor:
+            session._handler_ejecutado = "procesar_documento"
+            if session.etapa == EtapaConversacion.VENDEDOR_TIPO:
+                session.avanzar_etapa(EtapaConversacion.VENDEDOR_DATOS)
+            if lead.nombre is None:
+                return (
+                    "¡Genial, recibí el recibo de sueldo! 📄 "
+                    "¿Cómo se llama la persona a cotizar?"
+                )
+            faltantes = self._datos_faltantes_para_cotizar(lead, vendedor=True)
+            if not faltantes:
+                session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
+                return self._handle_vendedor_cotizando(
+                    session, "[recibo adjunto]"
+                )
+            session.mensajes_en_etapa += 1
+            return (
+                "¡Recibí el recibo de sueldo! ✅ "
+                f"¿{faltantes[0].capitalize()}?"
+            )
+
+        # Flujo cliente normal.
+        session._handler_ejecutado = "procesar_documento"
+        if lead.nombre is None:
+            return (
+                "¡Perfecto, recibí el recibo de sueldo! 📄 ¿Cómo te llamás?"
+            )
+        faltantes = self._datos_faltantes_para_cotizar(lead)
+        if not faltantes:
+            session.avanzar_etapa(EtapaConversacion.COTIZANDO)
+            return self._handle_cotizando(session, "[recibo adjunto]")
+        session.mensajes_en_etapa += 1
+        return f"¡Recibí el recibo de sueldo! ✅ ¿{faltantes[0].capitalize()}?"
+
+    def _extraer_conceptos_pdf(self, ruta_archivo: str) -> list[float]:
+        """Extrae conceptos de obra social del texto de un PDF de recibo."""
+        try:
+            from pypdf import PdfReader
+            with open(ruta_archivo, "rb") as fh:
+                reader = PdfReader(fh)
+                texto = "\n".join(
+                    (pagina.extract_text() or "") for pagina in reader.pages
+                )
+        except Exception as e:
+            logger.warning(
+                "[PDF] No se pudo leer el recibo %s: %s", ruta_archivo, e
+            )
+            return []
+        if not texto.strip():
+            logger.info("[PDF] Recibo sin texto extraíble: %s", ruta_archivo)
+            return []
+        return self._extraer_conceptos_obra_social(texto)
 
     # ─────────────────────────────────────────
     # Enrutamiento
@@ -945,19 +1069,23 @@ class ConversationManager:
         )
 
     def _detectar_tipo_cotizacion(self, mensaje: str) -> TipoAfiliacion | None:
-        """Detecta el tipo de afiliación de la persona a cotizar."""
+        """Detecta el tipo de afiliación de la persona a cotizar.
+
+        Tolerante a typos: "con reecibo de sueldo" -> RELACION_DEPENDENCIA.
+        """
         if not mensaje:
             return None
         texto = _normalizar_localidad(mensaje).lower()
 
-        if any(p in texto for p in ["monotributo", "monotributista"]):
+        if _coincide_alguna(texto, ["monotributo", "monotributista"]):
             return TipoAfiliacion.MONOTRIBUTO
-        if any(p in texto for p in [
+        if _coincide_alguna(texto, [
             "recibo", "relacion de dependencia", "dependencia",
             "empleado", "en blanco", "con aportes", "obra social",
+            "documento", "pdf", "archivo",
         ]):
             return TipoAfiliacion.RELACION_DEPENDENCIA
-        if any(p in texto for p in [
+        if _coincide_alguna(texto, [
             "directo", "particular", "autonomo", "independiente",
             "sin recibo", "sin monotributo",
         ]):
@@ -1109,7 +1237,10 @@ class ConversationManager:
                 lead.categoria_monotributo = match.group(1).upper()
 
         if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
-            if self._detectar_recibo_sueldo(mensaje):
+            if (
+                self._detectar_recibo_sueldo(mensaje)
+                or self._es_confirmacion_simple(mensaje)
+            ):
                 lead.tiene_recibo_sueldo = True
                 if not lead.conceptos_obra_social:
                     conceptos = self._extraer_conceptos_obra_social(mensaje)
@@ -1297,6 +1428,20 @@ class ConversationManager:
         """
         faltantes: list[str] = []
 
+        # RELACION_DEPENDENCIA: el recibo (foto/PDF) es lo primero que se pide.
+        if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
+            if not lead.tiene_recibo_sueldo:
+                faltantes.append(
+                    "me podés enviar el recibo de sueldo del cliente "
+                    "(foto o PDF)" if vendedor
+                    else "me podés enviar el recibo de sueldo (foto o PDF)"
+                )
+            elif not lead.conceptos_obra_social:
+                faltantes.append(
+                    "los conceptos de obra social del recibo "
+                    "(ej: $15.000, $8.000)"
+                )
+
         if lead.localidad is None:
             faltantes.append(
                 "de qué localidad es la persona a cotizar" if vendedor
@@ -1314,18 +1459,6 @@ class ConversationManager:
                 faltantes.append(
                     "en qué categoría de monotributo está" if vendedor
                     else "en qué categoría de monotributo estás"
-                )
-
-        if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
-            if not lead.tiene_recibo_sueldo:
-                faltantes.append(
-                    "si tiene el recibo de sueldo a mano" if vendedor
-                    else "si tenés el recibo de sueldo a mano"
-                )
-            elif not lead.conceptos_obra_social:
-                faltantes.append(
-                    "los conceptos de obra social del recibo "
-                    "(ej: $15.000, $8.000)"
                 )
 
         return faltantes
@@ -1371,7 +1504,10 @@ class ConversationManager:
 
         # Detectar recibo de sueldo si aplica
         if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
-            if self._detectar_recibo_sueldo(mensaje):
+            if (
+                self._detectar_recibo_sueldo(mensaje)
+                or self._es_confirmacion_simple(mensaje)
+            ):
                 lead.tiene_recibo_sueldo = True
                 # Extraer conceptos solo cuando el mensaje menciona recibo
                 if not lead.conceptos_obra_social:
@@ -1619,14 +1755,26 @@ class ConversationManager:
         return texto
 
     def _detectar_recibo_sueldo(self, mensaje: str) -> bool:
-        """Detecta si el mensaje menciona recibo de sueldo."""
+        """Detecta si el mensaje menciona recibo de sueldo (con typos)."""
         keywords = [
             "recibo de sueldo", "recibo", "sueldo", "boleta de pago",
             "conceptos obra social", "aportes obra social",
             "descuentos de obra social", "tengo recibo",
         ]
-        mensaje_lower = mensaje.lower()
-        return any(kw in mensaje_lower for kw in keywords)
+        mensaje_lower = _normalizar_localidad(mensaje).lower()
+        return _coincide_alguna(mensaje_lower, keywords)
+
+    def _es_confirmacion_simple(self, mensaje: str) -> bool:
+        """Detecta una confirmación corta del recibo: "sí", "lo tengo", etc."""
+        if not mensaje:
+            return False
+        texto = _normalizar_localidad(mensaje).strip()
+        texto = " ".join(texto.split())
+        return texto in {
+            "si", "sí", "si lo tengo", "sí lo tengo", "lo tengo",
+            "tengo", "tengo el recibo", "si tengo", "si, lo tengo",
+            "dale", "ok", "claro", "si lo tiene", "lo tiene",
+        }
 
     def _extraer_conceptos_obra_social(self, mensaje: str) -> list[float]:
         """
