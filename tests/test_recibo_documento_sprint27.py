@@ -163,6 +163,9 @@ class TestDocumentoPDF:
         session = manager.session_manager.get(tid)
         lead = session.lead
 
+        assert "familia" in respuesta.lower()
+        respuesta = manager.procesar_mensaje(tid, "sola")
+
         assert lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA
         assert lead.conceptos_obra_social == [15000.0, 8000.0]
         assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO

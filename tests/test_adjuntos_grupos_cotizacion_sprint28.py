@@ -185,6 +185,9 @@ class TestAdjuntoSinTipo:
         assert lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO
         assert lead.categoria_monotributo == "B"
         assert lead.tiene_recibo_sueldo is not True
+        assert "familia" in respuesta.lower()
+
+        respuesta = manager.procesar_mensaje(tid, "solo")
         assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
         assert "otro cliente" in respuesta
 
@@ -230,5 +233,104 @@ class TestDeteccionPrepagoDirecto:
 
         assert session.lead.tipo_afiliacion == TipoAfiliacion.PARTICULAR
         assert session.lead.tiene_recibo_sueldo is not True
+        assert "familia" in respuesta.lower()
+
+        respuesta = manager.procesar_mensaje(tid, "solo")
+        assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
+        assert "otro cliente" in respuesta
+
+
+# ─────────────────────────────────────────
+# Flujo vendedor: no pedir recibo antes del tipo
+# ─────────────────────────────────────────
+
+class TestNoPideReciboAntesDelTipo:
+    def test_no_pide_recibo_sin_tipo(self, manager):
+        """'quiero cotizar' no debe pedir el recibo si el tipo no está definido."""
+        tid = 7101
+        manager.procesar_mensaje(tid, "soy vendedor")
+        respuesta = manager.procesar_mensaje(tid, "quiero cotizar")
+        session = manager.session_manager.get(tid)
+
+        assert "recibo de sueldo" not in respuesta.lower() or "monotributo" in respuesta
+        assert "monotributo" in respuesta
+        assert session.etapa == EtapaConversacion.VENDEDOR_TIPO
+
+    def test_es_monotributo_en_datos_cambia_tipo(self, manager):
+        """Regresión: 'es monotributo' en VENDEDOR_DATOS ya no se ignora."""
+        tid = 7102
+        manager.procesar_mensaje(tid, "soy vendedor")
+        # Forzar sesión "vieja" con tipo recibo (simula estado previo al fix).
+        session = manager.session_manager.get(tid)
+        session.avanzar_etapa(EtapaConversacion.VENDEDOR_DATOS)
+        session.lead.tipo_afiliacion = TipoAfiliacion.RELACION_DEPENDENCIA
+        session.lead.nombre = "Carlos"
+
+        respuesta = manager.procesar_mensaje(tid, "es monotributo")
+        lead = manager.session_manager.get(tid).lead
+
+        assert lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO
+        # Ya no pide el recibo: sigue con los datos (localidad).
+        assert "recibo" not in respuesta.lower()
+        assert "localidad" in respuesta.lower()
+
+    def test_quiero_cotizar_otro_cliente_reinicia(self, manager):
+        """'quiero cotizar otro cliente' en medio de datos reinicia la cotización."""
+        tid = 7103
+        manager.procesar_mensaje(tid, "soy vendedor")
+        session = manager.session_manager.get(tid)
+        session.avanzar_etapa(EtapaConversacion.VENDEDOR_DATOS)
+        session.lead.tipo_afiliacion = TipoAfiliacion.RELACION_DEPENDENCIA
+
+        respuesta = manager.procesar_mensaje(tid, "quiero cotizar otro cliente")
+        session = manager.session_manager.get(tid)
+
+        assert session.etapa == EtapaConversacion.VENDEDOR_TIPO
+        assert session.lead.tipo_afiliacion is None
+        assert "monotributo" in respuesta
+
+
+# ─────────────────────────────────────────
+# Grupo familiar después del tipo
+# ─────────────────────────────────────────
+
+class TestGrupoFamiliarDespuesDelTipo:
+    def test_pregunta_grupo_familiar_tras_datos(self, manager):
+        """Tras tipo+datos, pregunta si cotiza solo o con familia."""
+        tid = 7201
+        manager.procesar_mensaje(tid, "soy vendedor")
+        manager.procesar_mensaje(tid, "monotributo")
+        manager.procesar_mensaje(tid, "Juan")
+        manager.procesar_mensaje(tid, "45 años, de Córdoba")
+        respuesta = manager.procesar_mensaje(tid, "categoría B")
+        assert "familia" in respuesta.lower()
+
+    def test_familia_detectada_y_cotiza(self, manager):
+        tid = 7202
+        manager.procesar_mensaje(tid, "soy vendedor")
+        manager.procesar_mensaje(tid, "monotributo")
+        manager.procesar_mensaje(tid, "Juan")
+        manager.procesar_mensaje(tid, "45 años, de Córdoba")
+        manager.procesar_mensaje(tid, "categoría B")
+        respuesta = manager.procesar_mensaje(tid, "con mi esposa y dos hijos")
+        session = manager.session_manager.get(tid)
+        lead = session.lead
+
+        assert lead.grupo_familiar.conyuge is True
+        assert lead.grupo_familiar.hijos is True
+        assert lead.cantidad_hijos == 2
+        assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
+        assert "otro cliente" in respuesta
+
+    def test_solo_confirma_y_cotiza(self, manager):
+        tid = 7203
+        manager.procesar_mensaje(tid, "soy vendedor")
+        manager.procesar_mensaje(tid, "monotributo")
+        manager.procesar_mensaje(tid, "Juan")
+        manager.procesar_mensaje(tid, "45 años, de Córdoba")
+        manager.procesar_mensaje(tid, "categoría B")
+        respuesta = manager.procesar_mensaje(tid, "solo, sin familia")
+        session = manager.session_manager.get(tid)
+
         assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
         assert "otro cliente" in respuesta

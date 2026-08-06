@@ -39,7 +39,8 @@ def _flujo_completo_monotributo(manager, tid):
     manager.procesar_mensaje(tid, "monotributo")
     manager.procesar_mensaje(tid, "Juan")
     manager.procesar_mensaje(tid, "45 años, de Córdoba")
-    return manager.procesar_mensaje(tid, "categoría B")
+    manager.procesar_mensaje(tid, "categoría B")
+    return manager.procesar_mensaje(tid, "solo")
 
 
 # ─────────────────────────────────────────
@@ -121,6 +122,9 @@ class TestFlujoCotizacionVendedor:
 
         assert lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA
         assert lead.conceptos_obra_social == [15000.0, 8000.0]
+        assert "familia" in respuesta.lower()
+
+        respuesta = manager.procesar_mensaje(tid, "sola")
         assert "María" in respuesta
 
     def test_directo_particular(self, manager):
@@ -131,6 +135,9 @@ class TestFlujoCotizacionVendedor:
         lead = manager.session_manager.get(tid).lead
 
         assert lead.tipo_afiliacion == TipoAfiliacion.PARTICULAR
+        assert "familia" in respuesta.lower()
+
+        respuesta = manager.procesar_mensaje(tid, "solo")
         assert "Pedro" in respuesta
         assert "otro cliente" in respuesta
 

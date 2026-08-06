@@ -86,6 +86,8 @@ class UserSession:
         self.es_vendedor: bool = False
         # Ruta local del último archivo recibido (recibo de sueldo en foto o PDF).
         self.recibo_ruta: str | None = None
+        # Si ya se preguntó si cotiza solo o con familia (flujo vendedor).
+        self.grupo_familiar_preguntado: bool = False
 
     def actualizar_interaccion(self) -> None:
         """Registra la hora de la última interacción."""

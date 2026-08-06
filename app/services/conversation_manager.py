@@ -353,7 +353,9 @@ class ConversationManager:
                         "¿Cómo se llama la persona a cotizar?"
                     )
                 return "¡Recibí el archivo! 📎 ¿Cómo se llama la persona a cotizar?"
-            faltantes = self._datos_faltantes_para_cotizar(lead, vendedor=True)
+            faltantes = self._datos_faltantes_para_cotizar(
+                lead, vendedor=True, session=session
+            )
             if not faltantes:
                 session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
                 return self._handle_vendedor_cotizando(
@@ -1069,6 +1071,38 @@ class ConversationManager:
         texto = _normalizar_localidad(mensaje).lower()
         return any(frase in texto for frase in self._VENDEDOR_SALIR)
 
+    def _es_inicio_cotizacion(self, mensaje: str) -> bool:
+        """Detecta si el vendedor pide empezar una cotización nueva."""
+        if not mensaje:
+            return False
+        texto = _normalizar_localidad(mensaje).lower()
+        return any(frase in texto for frase in [
+            "quiero cotizar", "voy a cotizar", "vamos a cotizar",
+            "cotizar otro", "cotizar un cliente", "otro cliente",
+            "otra cotizacion", "otra cotización", "nuevo cliente",
+            "empezar de nuevo", "empezar otra", "arrancar otra",
+            "arrancamos con otro", "hagamos una cotizacion",
+        ])
+
+    def _es_confirmacion_solo(self, mensaje: str) -> bool:
+        """Detecta si el usuario confirma que cotiza solo (sin familia)."""
+        if not mensaje:
+            return False
+        texto = _normalizar_localidad(mensaje).lower()
+        if texto.strip() in {"solo", "sola", "solito", "solita", "solitario", "individual", "si", "sí", "no", "no, solo", "no, sola"}:
+            return True
+        return any(frase in texto for frase in [
+            "sin familia", "sin pareja", "sin conyuge", "sin cónyuge",
+            "sin esposa", "sin esposo", "sin marido", "sin mujer",
+            "sin hijos", "sin carga", "sin dependientes",
+            "sin carga familiar", "para mi solo", "para mí solo",
+            "para mi sola", "para mí sola", "soy solo", "soy sola",
+            "soy soltero", "soy soltera", "titular solo", "titular sola",
+            "no tengo familia", "no tengo pareja", "no tengo hijos",
+            "no tengo mujer", "no tengo marido", "solamente yo", "solo yo",
+            "solo para mi", "solo para mí", "yo solo", "yo sola",
+        ])
+
     def _handle_vendedor_etapa(self, session: UserSession, mensaje: str) -> str:
         """Enruta el mensaje dentro del modo vendedor según la etapa."""
         if self._es_salir_vendedor(mensaje):
@@ -1206,6 +1240,21 @@ class ConversationManager:
 
         lead = session.lead
 
+        # Re-detectar el tipo de afiliación: el usuario puede aclararlo o
+        # corregirlo en medio de los datos (ej: "es monotributo").
+        tipo = self._detectar_tipo_cotizacion(mensaje)
+
+        # Si pide empezar una cotización nueva y no está dando el tipo,
+        # reiniciar (evita quedar atrapado pidiendo el recibo de otra sesión).
+        if tipo is None and self._es_inicio_cotizacion(mensaje):
+            return self._reiniciar_cotizacion_vendedor(session)
+
+        if tipo is not None and (
+            lead.tipo_afiliacion is None or lead.tipo_afiliacion != tipo
+        ):
+            lead.tipo_afiliacion = tipo
+            self._aplicar_recibo_pendiente(session)
+
         # Nombre de la persona a cotizar.
         if lead.nombre is None:
             from app.services.lead_qualifier import _extraer_nombre
@@ -1262,6 +1311,9 @@ class ConversationManager:
                     hijos=gf["hijos"],
                     cantidad_hijos=gf["cantidad_hijos"],
                 )
+                session.grupo_familiar_preguntado = True
+            elif self._es_confirmacion_solo(mensaje):
+                session.grupo_familiar_preguntado = True
 
         if (
             lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO
@@ -1282,7 +1334,9 @@ class ConversationManager:
                     if conceptos:
                         lead.conceptos_obra_social = conceptos
 
-        faltantes = self._datos_faltantes_para_cotizar(lead, vendedor=True)
+        faltantes = self._datos_faltantes_para_cotizar(
+            lead, vendedor=True, session=session
+        )
         if not faltantes:
             session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
             return self._handle_vendedor_cotizando(session, mensaje)
@@ -1393,6 +1447,10 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.VENDEDOR_CONSULTA)
             return "¡Claro! Decime tu consulta y te ayudo 😊"
 
+        # Pide empezar una cotización nueva.
+        if self._es_inicio_cotizacion(mensaje):
+            return self._reiniciar_cotizacion_vendedor(session)
+
         return "¿Querés que cotice otro cliente o tenés alguna otra consulta?"
 
     def _reiniciar_cotizacion_vendedor(self, session: UserSession) -> str:
@@ -1451,7 +1509,7 @@ class ConversationManager:
     # ─────────────────────────────────────────
 
     def _datos_faltantes_para_cotizar(
-        self, lead: Lead, vendedor: bool = False
+        self, lead: Lead, vendedor: bool = False, session: UserSession | None = None
     ) -> list[str]:
         """Lista los datos que faltan para poder cotizar.
 
@@ -1460,6 +1518,8 @@ class ConversationManager:
             vendedor: Si es True, la pregunta se redacta para una persona
                 distinta del usuario (ej: "¿cuántos años tiene la persona
                 a cotizar?" en lugar de "¿cuántos años tenés?").
+            session: Si se pasa, se pregunta por el grupo familiar (el bot
+                solo pregunta si el tipo ya está definido).
         """
         faltantes: list[str] = []
 
@@ -1495,6 +1555,18 @@ class ConversationManager:
                     "en qué categoría de monotributo está" if vendedor
                     else "en qué categoría de monotributo estás"
                 )
+
+        # Grupo familiar: confirmar si cotiza solo o con familia (vendedor).
+        if (
+            session is not None
+            and not session.grupo_familiar_preguntado
+            and not lead.grupo_familiar.conyuge
+            and not lead.grupo_familiar.hijos
+        ):
+            faltantes.append(
+                "si cotiza solo o con familia (pareja o hijos)" if vendedor
+                else "si cotizás solo o con familia (pareja o hijos)"
+            )
 
         return faltantes
 
