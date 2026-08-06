@@ -24,14 +24,23 @@ from sqlalchemy.orm import Session, sessionmaker
 
 logger = logging.getLogger(__name__)
 
+_factory_cache: Optional[sessionmaker] = None
+
 
 def _crear_factory() -> sessionmaker:
-    """Crea la session factory de la aplicación (y las tablas si faltan)."""
-    from app.database.database import crear_tablas, get_engine, get_session_factory
+    """Crea la session factory de la aplicación (y las tablas si faltan).
 
-    engine = get_engine()
-    crear_tablas(engine)
-    return get_session_factory(engine)
+    Se memoiza para no correr `crear_tablas` (DDL) en cada consulta:
+    el scheduler de ganchos consulta el estado de envío cada 30s.
+    """
+    global _factory_cache
+    if _factory_cache is None:
+        from app.database.database import crear_tablas, get_engine, get_session_factory
+
+        engine = get_engine()
+        crear_tablas(engine)
+        _factory_cache = get_session_factory(engine)
+    return _factory_cache
 
 
 def _sesion(factory: Optional[sessionmaker]) -> Session:
