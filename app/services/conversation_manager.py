@@ -1425,17 +1425,12 @@ class ConversationManager:
         """Interpreta la respuesta tras la cotización (otro cliente o salir)."""
         texto = _normalizar_localidad(mensaje).lower()
 
-        if any(p in texto for p in ["otro", "otra cotizacion", "otro cliente"]):
-            return self._reiniciar_cotizacion_vendedor(session)
-
-        if any(p in texto for p in ["si", "dale", "claro", "vamos", "bueno", "genial"]) and not any(
-            p in texto for p in ["no", "gracias"]
-        ):
-            return self._reiniciar_cotizacion_vendedor(session)
-
+        # Salir, salvo que en realidad haya una consulta (ej: "no, tengo una duda").
         if any(p in texto for p in [
             "no", "gracias", "nada", "termin", "eso es todo", "chau",
             "hasta luego", "adios",
+        ]) and not any(p in texto for p in [
+            "consulta", "pregunta", "duda",
         ]):
             return self._salir_modo_vendedor(session)
 
@@ -1447,8 +1442,19 @@ class ConversationManager:
             session.avanzar_etapa(EtapaConversacion.VENDEDOR_CONSULTA)
             return "¡Claro! Decime tu consulta y te ayudo 😊"
 
-        # Pide empezar una cotización nueva.
-        if self._es_inicio_cotizacion(mensaje):
+        # Pide empezar una cotización nueva (explícita o con frase de inicio).
+        # "otro" a secas también vale como afirmativo de cotizar otro cliente.
+        if (
+            texto.strip() in {"otro", "otra", "otro cliente", "dale otro"}
+            or any(p in texto for p in ["otra cotizacion", "otra cotización", "cotizar otro"])
+            or self._es_inicio_cotizacion(mensaje)
+        ):
+            return self._reiniciar_cotizacion_vendedor(session)
+
+        # Afirmativo genérico (sí, dale, vamos...) → cotizar otro cliente.
+        if any(p in texto for p in ["si", "sí", "dale", "claro", "vamos", "bueno", "genial"]) and not any(
+            p in texto for p in ["no", "gracias"]
+        ):
             return self._reiniciar_cotizacion_vendedor(session)
 
         return "¿Querés que cotice otro cliente o tenés alguna otra consulta?"

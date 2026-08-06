@@ -334,3 +334,55 @@ class TestGrupoFamiliarDespuesDelTipo:
 
         assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
         assert "otro cliente" in respuesta
+
+
+# ─────────────────────────────────────────
+# Loop tras la cotización: no confundir consultas libres
+# ─────────────────────────────────────────
+
+class TestLoopCotizandoNoConfundeConsulta:
+    def _cotizar_monotributo(self, manager, tid):
+        manager.procesar_mensaje(tid, "soy vendedor")
+        manager.procesar_mensaje(tid, "monotributo")
+        manager.procesar_mensaje(tid, "Juan")
+        manager.procesar_mensaje(tid, "45 años, de Córdoba")
+        manager.procesar_mensaje(tid, "categoría B")
+        respuesta = manager.procesar_mensaje(tid, "solo")
+        session = manager.session_manager.get(tid)
+        assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
+        assert "otro cliente" in respuesta
+
+    def test_otra_consulta_va_a_consulta(self, manager):
+        tid = 7301
+        self._cotizar_monotributo(manager, tid)
+        respuesta = manager.procesar_mensaje(tid, "sí, tengo otra consulta")
+        session = manager.session_manager.get(tid)
+        assert session.etapa == EtapaConversacion.VENDEDOR_CONSULTA
+        assert "Decime tu consulta" in respuesta
+
+    def test_otro_plan_no_reinicia(self, manager):
+        tid = 7302
+        self._cotizar_monotributo(manager, tid)
+        respuesta = manager.procesar_mensaje(tid, "¿hay otro plan más barato?")
+        session = manager.session_manager.get(tid)
+        # No reinicia ni sale: queda en el loop.
+        assert session.etapa == EtapaConversacion.VENDEDOR_COTIZANDO
+        assert session.lead.tipo_afiliacion == TipoAfiliacion.MONOTRIBUTO
+        assert "otro cliente" in respuesta
+
+    def test_no_tengo_una_duda_va_a_consulta(self, manager):
+        tid = 7303
+        self._cotizar_monotributo(manager, tid)
+        respuesta = manager.procesar_mensaje(tid, "no, tengo una duda")
+        session = manager.session_manager.get(tid)
+        assert session.etapa == EtapaConversacion.VENDEDOR_CONSULTA
+        assert "Decime tu consulta" in respuesta
+
+    def test_quiero_cotizar_otro_reinicia(self, manager):
+        tid = 7304
+        self._cotizar_monotributo(manager, tid)
+        respuesta = manager.procesar_mensaje(tid, "quiero cotizar otro cliente")
+        session = manager.session_manager.get(tid)
+        assert session.etapa == EtapaConversacion.VENDEDOR_TIPO
+        assert session.lead.tipo_afiliacion is None
+        assert "monotributo" in respuesta
