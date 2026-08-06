@@ -10,6 +10,11 @@ directamente.
 Los horarios se interpretan en la zona horaria de Córdoba
 (America/Argentina/Cordoba).
 
+El scheduler tolera que el servicio esté dormido (Render free tier): al
+despertar envía el gancho más reciente cuyo horario ya pasó y que no haya
+sido publicado hoy. El registro de lo enviado se persiste en la tabla
+``grupo_hooks_enviados`` para no duplicar publicaciones entre reinicios.
+
 Uso (en el lifespan de FastAPI):
     from app.telegram.group_hooks import GroupHookScheduler
     scheduler = GroupHookScheduler(token, group_chat_ids, horarios, habilitado)
@@ -24,15 +29,11 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from app.telegram.grupos_db import listar_grupos_activos
+from app.telegram.grupos_db import _crear_factory, listar_grupos_activos
 
 logger = logging.getLogger(__name__)
 
 TZ_CORDOBA = "America/Argentina/Cordoba"
-
-# Ventana (en segundos) dentro de la cual se envía un gancho si el proceso
-# arrancó tarde. Evita enviar todos los ganchos atrasados de golpe.
-_VENTANA_ENVIO_SEG = 3600
 
 # ─────────────────────────────────────────
 # Mensajes gancho
@@ -113,9 +114,10 @@ class GroupHookScheduler:
     """
     Programa y publica los ganchos diarios en los grupos registrados.
 
-    El loop revisa la hora cada 30 segundos y envía cada gancho una única
-    vez por día, dentro de una ventana de tolerancia (evita atrasos
-    acumulados tras un deploy).
+    El loop revisa la hora cada 30 segundos. Cuando un horario ya pasó y
+    todavía no fue publicado hoy, envía el más reciente de ellos una única
+    vez (persistido en DB), aunque el proceso haya estado dormido durante
+    horas.
     """
 
     def __init__(
@@ -126,6 +128,7 @@ class GroupHookScheduler:
         habilitado: bool = True,
         username: str = "",
         reloj: Optional[callable] = None,
+        factory: Optional[callable] = None,
     ) -> None:
         self._token = token
         self._group_chat_ids = list(group_chat_ids or [])
@@ -133,6 +136,7 @@ class GroupHookScheduler:
         self._habilitado = habilitado
         self._username = username or ""
         self._reloj = reloj or (lambda: datetime.now(ZoneInfo(TZ_CORDOBA)))
+        self._factory = factory
         self._task: Optional[asyncio.Task] = None
         self._enviados: dict[str, set[str]] = {}
         self._enviado_ultimo: Optional[dict] = None
@@ -182,33 +186,86 @@ class GroupHookScheduler:
             await asyncio.sleep(30)
 
     async def _ejecutar_si_corresponde(self) -> None:
-        """Envía los ganchos cuyo horario ya llegó (dentro de la ventana)."""
+        """Envía el gancho más reciente cuyo horario ya pasó y no fue enviado."""
         if not self._habilitado:
             return
         ahora = self._reloj()
         fecha = ahora.strftime("%Y-%m-%d")
-        clave_hora = ahora.strftime("%H:%M")
         enviados_hoy = self._enviados.setdefault(fecha, set())
 
-        for horario in self._horarios:
-            if horario in enviados_hoy:
-                continue
-            if not self._en_ventana(horario, ahora):
-                continue
-            texto = elegir_gancho(horario, ahora)
-            await self._enviar_gancho(texto)
-            enviados_hoy.add(horario)
-            self._enviado_ultimo = {"horario": horario, "texto": texto}
+        candidatos = [
+            horario
+            for horario in self._horarios
+            if horario not in enviados_hoy
+            and self._es_horario_pasado(horario, ahora)
+            and not self._ya_enviado(fecha, horario)
+        ]
+        if not candidatos:
+            return
 
-    def _en_ventana(self, horario: str, ahora: datetime) -> bool:
-        """True si el horario ya pasó hace menos de la ventana de tolerancia."""
+        # Solo el más reciente: evita encadenar todos los ganchos atrasados
+        # de golpe si el proceso estuvo dormido varias horas.
+        horario = max(candidatos)
+        texto = elegir_gancho(horario, ahora)
+        await self._enviar_gancho(texto)
+        enviados_hoy.add(horario)
+        self._marcar_enviado(fecha, horario)
+        self._enviado_ultimo = {"horario": horario, "texto": texto}
+
+    def _es_horario_pasado(self, horario: str, ahora: datetime) -> bool:
+        """True si el horario ya llegó (o pasó) en la fecha actual."""
         try:
             hora, minu = map(int, horario.split(":"))
         except ValueError:
             return False
         inicio = ahora.replace(hour=hora, minute=minu, second=0, microsecond=0)
-        delta = (ahora - inicio).total_seconds()
-        return 0 <= delta <= _VENTANA_ENVIO_SEG
+        return ahora >= inicio
+
+    # ─────────────────────────────────────────
+    # Persistencia de envíos (evita duplicados entre reinicios)
+    # ─────────────────────────────────────────
+
+    def _sesion(self):
+        """Session factory: la inyectada en tests o la de la app."""
+        if self._factory is not None:
+            return self._factory()
+        return _crear_factory()()
+
+    def _ya_enviado(self, fecha: str, horario: str) -> bool:
+        try:
+            from sqlalchemy import select
+
+            from app.database.models import GrupoHookEnviadoDB
+
+            db = self._sesion()
+            try:
+                fila = db.execute(
+                    select(GrupoHookEnviadoDB).where(
+                        GrupoHookEnviadoDB.fecha == fecha,
+                        GrupoHookEnviadoDB.horario == horario,
+                    )
+                ).scalar_one_or_none()
+                return fila is not None
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.debug("[HOOKS] _ya_enviado falló (%s %s): %s", fecha, horario, exc)
+            return False
+
+    def _marcar_enviado(self, fecha: str, horario: str) -> None:
+        try:
+            from app.database.models import GrupoHookEnviadoDB
+
+            db = self._sesion()
+            try:
+                db.add(GrupoHookEnviadoDB(fecha=fecha, horario=horario))
+                db.commit()
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.warning(
+                "[HOOKS] No se pudo registrar envío %s %s: %s", fecha, horario, exc
+            )
 
     # ─────────────────────────────────────────
     # Envío

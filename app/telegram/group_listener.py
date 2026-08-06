@@ -63,6 +63,7 @@ class GroupListener:
         self._manager = manager
         self._cooldown_auto: dict[int, float] = {}
         self._cooldown_mencion: dict[int, float] = {}
+        self._grupos_registrados: set[int] = set()
 
     # ─────────────────────────────────────────
     # Dependencias
@@ -213,6 +214,13 @@ class GroupListener:
         chat = update.effective_chat
         if chat is None or chat.type not in ("group", "supergroup"):
             return
+
+        # Auto-registro: cualquier mensaje escuchado confirma que el bot está
+        # en el grupo. Así los ganchos se publican aunque nunca llegue el
+        # update my_chat_member (p. ej. si el servicio dormía al agregarlo).
+        if chat.id not in self._grupos_registrados:
+            registrar_grupo(chat.id, chat.title or "")
+            self._grupos_registrados.add(chat.id)
 
         message = update.message
         if message is None or not message.text:

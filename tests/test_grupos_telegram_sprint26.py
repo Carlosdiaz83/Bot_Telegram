@@ -3,10 +3,12 @@ Tests Sprint 26 — Grupos de Telegram: escucha + ganchos automáticos.
 
 Cubre:
     - Registro de grupos en DB (alta/baja del bot)
+    - Auto-registro del grupo ante cualquier mensaje escuchado
     - Detección de relevancia de mensajes de grupo
     - Respuestas con llamado a la acción basadas en conocimiento
     - Elección y rotación de ganchos por horario
-    - Ventana de envío del scheduler (una vez por día)
+    - Catch-up del scheduler (envía el gancho atrasado al despertar)
+    - Persistencia de envíos (no duplica entre reinicios)
     - Parsing de configuración (chat_ids y horarios)
 """
 
@@ -201,7 +203,7 @@ class _SchedulerConRegistro(GroupHookScheduler):
 
 
 class TestScheduler:
-    def test_envia_dentro_de_la_ventana_una_vez(self):
+    def test_envia_el_gancho_pasado_una_vez(self, factory_grupos):
         import asyncio
 
         sched = _SchedulerConRegistro(
@@ -209,6 +211,7 @@ class TestScheduler:
             group_chat_ids=[-1001],
             habilitado=True,
             reloj=lambda: _fecha("08:45"),
+            factory=factory_grupos,
         )
         asyncio.run(sched._ejecutar_si_corresponde())
         asyncio.run(sched._ejecutar_si_corresponde())
@@ -216,7 +219,21 @@ class TestScheduler:
         assert len(sched.enviados) == 1
         assert "privado" in sched.enviados[0]
 
-    def test_no_envia_fuera_de_la_ventana(self):
+    def test_no_envia_antes_del_primer_horario(self, factory_grupos):
+        import asyncio
+
+        sched = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            habilitado=True,
+            reloj=lambda: _fecha("08:00"),
+            factory=factory_grupos,
+        )
+        asyncio.run(sched._ejecutar_si_corresponde())
+        assert sched.enviados == []
+
+    def test_envia_atrasado_al_despertar(self, factory_grupos):
+        """Si el proceso estuvo dormido, envía el gancho cuyo horario pasó."""
         import asyncio
 
         sched = _SchedulerConRegistro(
@@ -224,11 +241,28 @@ class TestScheduler:
             group_chat_ids=[-1001],
             habilitado=True,
             reloj=lambda: _fecha("10:00"),
+            factory=factory_grupos,
         )
         asyncio.run(sched._ejecutar_si_corresponde())
-        assert sched.enviados == []
+        assert len(sched.enviados) == 1
+        assert "Soy Sofía" in sched.enviados[0] or "asistente de Servired" in sched.enviados[0]
 
-    def test_deshabilitado_no_envia(self):
+    def test_solo_envia_el_mas_reciente(self, factory_grupos):
+        """Con varios horarios atrasados, solo publica el último (sin spam)."""
+        import asyncio
+
+        sched = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            habilitado=True,
+            reloj=lambda: _fecha("16:00"),
+            factory=factory_grupos,
+        )
+        asyncio.run(sched._ejecutar_si_corresponde())
+        assert len(sched.enviados) == 1
+        assert "guardia" in sched.enviados[0]
+
+    def test_deshabilitado_no_envia(self, factory_grupos):
         import asyncio
 
         sched = _SchedulerConRegistro(
@@ -236,16 +270,17 @@ class TestScheduler:
             group_chat_ids=[-1001],
             habilitado=False,
             reloj=lambda: _fecha("08:45"),
+            factory=factory_grupos,
         )
         asyncio.run(sched._ejecutar_si_corresponde())
         assert sched.enviados == []
 
-    def test_en_ventana(self):
+    def test_es_horario_pasado(self):
         sched = GroupHookScheduler(token="t", habilitado=True)
-        assert sched._en_ventana("08:30", _fecha("08:45"))
-        assert sched._en_ventana("08:30", _fecha("08:30"))
-        assert not sched._en_ventana("08:30", _fecha("09:45"))
-        assert not sched._en_ventana("08:30", _fecha("08:00"))
+        assert sched._es_horario_pasado("08:30", _fecha("08:45"))
+        assert sched._es_horario_pasado("08:30", _fecha("08:30"))
+        assert sched._es_horario_pasado("08:30", _fecha("09:45"))
+        assert not sched._es_horario_pasado("08:30", _fecha("08:00"))
 
     def test_grupos_destino_incluye_db_y_env(self, factory_grupos):
         import asyncio
@@ -257,11 +292,88 @@ class TestScheduler:
             group_chat_ids=[-1001],
             habilitado=True,
             reloj=lambda: _fecha("08:45"),
+            factory=factory_grupos,
         )
         with patch("app.telegram.group_hooks.listar_grupos_activos",
                    return_value=[-100999]):
             asyncio.run(sched._ejecutar_si_corresponde())
         assert len(sched.enviados) == 1
+
+    def test_persistencia_evita_reenvio_entre_reinicios(self, factory_grupos):
+        """El envío persiste en DB: un proceso nuevo no repite el gancho."""
+        import asyncio
+
+        sched1 = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            habilitado=True,
+            reloj=lambda: _fecha("08:45"),
+            factory=factory_grupos,
+        )
+        asyncio.run(sched1._ejecutar_si_corresponde())
+        assert len(sched1.enviados) == 1
+
+        sched2 = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            habilitado=True,
+            reloj=lambda: _fecha("09:00"),
+            factory=factory_grupos,
+        )
+        asyncio.run(sched2._ejecutar_si_corresponde())
+        assert sched2.enviados == []
+
+
+# ─────────────────────────────────────────
+# Auto-registro de grupos al escuchar mensajes
+# ─────────────────────────────────────────
+
+class TestAutoRegistro:
+    def _fake_update(self, chat_id: int, texto: str, chat_type: str = "group"):
+        from types import SimpleNamespace
+
+        chat = SimpleNamespace(id=chat_id, type=chat_type, title="Grupo Test")
+        user = SimpleNamespace(is_bot=False, first_name="Juan")
+        message = SimpleNamespace(text=texto, from_user=user, reply_to_message=None)
+        return SimpleNamespace(effective_chat=chat, message=message, my_chat_member=None)
+
+    def _listener(self, monkeypatch, factory_grupos):
+        import app.telegram.group_listener as gl_mod
+        from app.telegram.group_listener import GroupListener
+
+        registros = []
+
+        def fake_registrar(chat_id, titulo="", factory=None):
+            registros.append((chat_id, titulo))
+            return registrar_grupo(chat_id, titulo, factory=factory_grupos)
+
+        monkeypatch.setattr(gl_mod, "registrar_grupo", fake_registrar)
+        listener = GroupListener(manager=None)
+        return listener, registros
+
+    def test_registra_grupo_con_mensaje_irrelevante(self, monkeypatch, factory_grupos):
+        import asyncio
+        from types import SimpleNamespace
+
+        listener, registros = self._listener(monkeypatch, factory_grupos)
+        update = self._fake_update(-100777, "buen día gente")
+        context = SimpleNamespace(bot=SimpleNamespace(username="sofiabot", id=1))
+
+        asyncio.run(listener.handle_group_message(update, context))
+        assert registros == [(-100777, "Grupo Test")]
+
+    def test_registra_una_sola_vez_por_grupo(self, monkeypatch, factory_grupos):
+        import asyncio
+        from types import SimpleNamespace
+
+        listener, registros = self._listener(monkeypatch, factory_grupos)
+        context = SimpleNamespace(bot=SimpleNamespace(username="sofiabot", id=1))
+
+        asyncio.run(listener.handle_group_message(
+            self._fake_update(-100777, "¿quién juega hoy?"), context))
+        asyncio.run(listener.handle_group_message(
+            self._fake_update(-100777, "¿alguien vio el partido?"), context))
+        assert len(registros) == 1
 
 
 # ─────────────────────────────────────────

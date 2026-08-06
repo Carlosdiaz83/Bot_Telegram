@@ -22,6 +22,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -311,6 +312,39 @@ class GrupoTelegramDB(Base):
         return (
             f"<GrupoTelegramDB(id={self.id}, chat_id={self.chat_id}, "
             f"titulo={self.titulo}, activo={self.activo})>"
+        )
+
+
+class GrupoHookEnviadoDB(Base):
+    """
+    Registro persistente de ganchos de grupo ya enviados.
+
+    Permite al GroupHookScheduler saber qué horario de gancho ya se
+    publicó hoy en los grupos, incluso si el proceso (o el servicio en
+    Render free tier) se reinicia varias veces al día. Así el catch-up
+    al despertar no duplica publicaciones.
+    """
+
+    __tablename__ = "grupo_hooks_enviados"
+    __table_args__ = (
+        UniqueConstraint(
+            "fecha", "horario", name="uq_grupo_hooks_enviados_fecha_horario"
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fecha = Column(String(10), nullable=False, index=True, comment="YYYY-MM-DD (Córdoba)")
+    horario = Column(String(5), nullable=False, index=True, comment="HH:MM (Córdoba)")
+    creado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<GrupoHookEnviadoDB(id={self.id}, fecha={self.fecha}, "
+            f"horario={self.horario})>"
         )
 
 
