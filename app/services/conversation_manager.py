@@ -308,60 +308,74 @@ class ConversationManager:
         if es_vendedor:
             session.es_vendedor = True
 
-        # El archivo se interpreta como el recibo de sueldo.
+        # El archivo se guarda como referencia. Solo se interpreta como recibo
+        # de sueldo si el tipo de afiliación ya es RELACION_DEPENDENCIA; NO se
+        # asume relación de dependencia ante un adjunto sin tipo (eso bloqueaba
+        # cotizar monotributo, directo o prepago).
         session.recibo_ruta = ruta_archivo
-        if lead.tipo_afiliacion is None:
-            lead.tipo_afiliacion = TipoAfiliacion.RELACION_DEPENDENCIA
-        lead.tiene_recibo_sueldo = True
+        tipo = lead.tipo_afiliacion
+        es_recibo = tipo == TipoAfiliacion.RELACION_DEPENDENCIA
 
-        # Si es PDF, intentar extraer conceptos de obra social del texto.
-        if not lead.conceptos_obra_social and ruta_archivo.lower().endswith(".pdf"):
-            conceptos = self._extraer_conceptos_pdf(ruta_archivo)
-            if conceptos:
-                lead.conceptos_obra_social = conceptos
-                logger.info(
-                    "[DOCUMENTO] Conceptos extraídos del PDF — user=%s: %s",
-                    telegram_id, conceptos,
-                )
+        if es_recibo:
+            lead.tiene_recibo_sueldo = True
+            # Si es PDF, intentar extraer conceptos de obra social del texto.
+            if not lead.conceptos_obra_social and ruta_archivo.lower().endswith(".pdf"):
+                conceptos = self._extraer_conceptos_pdf(ruta_archivo)
+                if conceptos:
+                    lead.conceptos_obra_social = conceptos
+                    logger.info(
+                        "[DOCUMENTO] Conceptos extraídos del PDF — user=%s: %s",
+                        telegram_id, conceptos,
+                    )
 
         logger.info(
-            "[DOCUMENTO] Recibo aceptado — user=%s, archivo=%s, vendedor=%s",
-            telegram_id, nombre_archivo or ruta_archivo, es_vendedor,
+            "[DOCUMENTO] Archivo recibido — user=%s, archivo=%s, tipo=%s, "
+            "vendedor=%s, es_recibo=%s",
+            telegram_id, nombre_archivo or ruta_archivo,
+            tipo.value if tipo else None, es_vendedor, es_recibo,
         )
 
         if es_vendedor:
             session._handler_ejecutado = "procesar_documento"
+            if tipo is None:
+                # Aún no definió cómo cotiza: no asumir recibo, preguntar el tipo.
+                return (
+                    "¡Recibí el archivo! 📎 ¿La persona a cotizar tiene recibo "
+                    "de sueldo, es monotributista o paga en forma directa "
+                    "(prepaga)?"
+                )
             if session.etapa == EtapaConversacion.VENDEDOR_TIPO:
                 session.avanzar_etapa(EtapaConversacion.VENDEDOR_DATOS)
             if lead.nombre is None:
-                return (
-                    "¡Genial, recibí el recibo de sueldo! 📄 "
-                    "¿Cómo se llama la persona a cotizar?"
-                )
+                if es_recibo:
+                    return (
+                        "¡Genial, recibí el recibo de sueldo! 📄 "
+                        "¿Cómo se llama la persona a cotizar?"
+                    )
+                return "¡Recibí el archivo! 📎 ¿Cómo se llama la persona a cotizar?"
             faltantes = self._datos_faltantes_para_cotizar(lead, vendedor=True)
             if not faltantes:
                 session.avanzar_etapa(EtapaConversacion.VENDEDOR_COTIZANDO)
                 return self._handle_vendedor_cotizando(
-                    session, "[recibo adjunto]"
+                    session, "[archivo adjunto]"
                 )
             session.mensajes_en_etapa += 1
-            return (
-                "¡Recibí el recibo de sueldo! ✅ "
-                f"¿{faltantes[0].capitalize()}?"
-            )
+            prefijo = "¡Recibí el recibo de sueldo! ✅" if es_recibo else "¡Recibí el archivo! 📎"
+            return f"{prefijo} ¿{faltantes[0].capitalize()}?"
 
         # Flujo cliente normal.
         session._handler_ejecutado = "procesar_documento"
         if lead.nombre is None:
             return (
-                "¡Perfecto, recibí el recibo de sueldo! 📄 ¿Cómo te llamás?"
+                "¡Perfecto, recibí el archivo! 📎 ¿Cómo te llamás?"
             )
         faltantes = self._datos_faltantes_para_cotizar(lead)
         if not faltantes:
             session.avanzar_etapa(EtapaConversacion.COTIZANDO)
-            return self._handle_cotizando(session, "[recibo adjunto]")
+            return self._handle_cotizando(session, "[archivo adjunto]")
         session.mensajes_en_etapa += 1
-        return f"¡Recibí el recibo de sueldo! ✅ ¿{faltantes[0].capitalize()}?"
+        prefijo = "¡Recibí el recibo de sueldo! ✅" if es_recibo else "¡Recibí el archivo! 📎"
+        return f"{prefijo} ¿{faltantes[0].capitalize()}?"
 
     def _extraer_conceptos_pdf(self, ruta_archivo: str) -> list[float]:
         """Extrae conceptos de obra social del texto de un PDF de recibo."""
@@ -381,6 +395,26 @@ class ConversationManager:
             logger.info("[PDF] Recibo sin texto extraíble: %s", ruta_archivo)
             return []
         return self._extraer_conceptos_obra_social(texto)
+
+    def _aplicar_recibo_pendiente(self, session: UserSession) -> None:
+        """Si hay un archivo guardado sin tipo y el tipo resultó relación de
+        dependencia, lo aplica como recibo (sin volver a pedir el archivo)."""
+        lead = session.lead
+        if (
+            lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA
+            and lead.tiene_recibo_sueldo is not True
+            and session.recibo_ruta
+        ):
+            lead.tiene_recibo_sueldo = True
+            ruta = str(session.recibo_ruta)
+            if not lead.conceptos_obra_social and ruta.lower().endswith(".pdf"):
+                conceptos = self._extraer_conceptos_pdf(ruta)
+                if conceptos:
+                    lead.conceptos_obra_social = conceptos
+                    logger.info(
+                        "[DOCUMENTO] Conceptos extraídos del archivo pendiente — user=%s: %s",
+                        session.telegram_id, conceptos,
+                    )
 
     # ─────────────────────────────────────────
     # Enrutamiento
@@ -1087,7 +1121,7 @@ class ConversationManager:
             return TipoAfiliacion.RELACION_DEPENDENCIA
         if _coincide_alguna(texto, [
             "directo", "particular", "autonomo", "independiente",
-            "sin recibo", "sin monotributo",
+            "sin recibo", "sin monotributo", "prepago", "prepaga",
         ]):
             return TipoAfiliacion.PARTICULAR
         return None
@@ -1099,6 +1133,7 @@ class ConversationManager:
         tipo = self._detectar_tipo_cotizacion(mensaje)
         if tipo is not None:
             lead.tipo_afiliacion = tipo
+            self._aplicar_recibo_pendiente(session)
 
             # Capturar datos extra que puedan venir en el mismo mensaje.
             from app.services.lead_qualifier import (
@@ -1467,6 +1502,10 @@ class ConversationManager:
         """Recolecta datos restantes para cotizar: localidad, edad/categoría/recibo."""
         lead = session.lead
         lead.estado_comercial = EstadoComercial.CALIFICANDO
+
+        # Si ya había un archivo guardado y el tipo es relación de dependencia,
+        # aplicarlo como recibo (no volver a pedirlo).
+        self._aplicar_recibo_pendiente(session)
 
         # Extraer datos del mensaje
         from app.services.lead_qualifier import (

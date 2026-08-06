@@ -207,7 +207,7 @@ def _detectar_tipo_afiliacion(texto: str) -> TipoAfiliacion | None:
         return TipoAfiliacion.EMPRESA
     if any(p in texto_lower for p in ["recibo", "sueldo", "empleado", "dependencia", "contrato"]):
         return TipoAfiliacion.RELACION_DEPENDENCIA
-    if any(p in texto_lower for p in ["particular", "sin obra", "sin cobertura", "busco obra"]):
+    if any(p in texto_lower for p in ["particular", "sin obra", "sin cobertura", "busco obra", "directo", "prepago", "prepaga"]):
         return TipoAfiliacion.PARTICULAR
 
     return None

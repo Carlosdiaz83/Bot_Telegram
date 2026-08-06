@@ -89,11 +89,14 @@ class TelegramBot:
         application.add_handler(CommandHandler("start", handle_start))
         application.add_handler(
             MessageHandler(
-                filters.Document.ALL & ~filters.COMMAND, handle_document
+                filters.Document.ALL
+                & ~filters.COMMAND
+                & filters.ChatType.PRIVATE,
+                handle_document,
             )
         )
         application.add_handler(
-            MessageHandler(filters.PHOTO, handle_photo)
+            MessageHandler(filters.PHOTO & filters.ChatType.PRIVATE, handle_photo)
         )
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
