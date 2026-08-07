@@ -356,6 +356,60 @@ class TestAutoTrainer:
         assert "evolucion" in resumen
         assert resumen["ts"]
 
+    def test_entrenamiento_persiste_en_db(self, engine, db_factory):
+        """Regresión: los scores se guardan con los atributos reales de
+        EvaluacionComercial (antes fallaba silenciosamente)."""
+        from app.services.auto_trainer import AutoTrainer
+        from app.database.repository import TrainingRepository
+        trainer = AutoTrainer(database_url="sqlite:///:memory:", db_factory=None)
+        trainer._entrenar = lambda: 0  # no re-ejecutar simulaciones
+        trainer._extraer_lecciones = lambda: 0
+
+        db = db_factory()
+        try:
+            repo = TrainingRepository(db)
+            repo.guardar({
+                "perfil": "cliente_frio",
+                "score_total": 60,
+                "score_descubrimiento": 15,
+                "score_calificacion": 12,
+                "score_valor": 13,
+                "score_objeciones": 10,
+                "score_cierre": 10,
+                "cantidad_errores": 2,
+                "errores": ["cotizacion_sin_diagnostico"],
+                "recomendaciones": ["ordenar preguntas"],
+            })
+            sesiones = repo.por_perfil("cliente_frio")
+            assert sesiones
+            sesion = sesiones[0]
+            assert sesion.score_descubrimiento == 15
+            assert sesion.score_total == 60
+        finally:
+            db.close()
+
+    def test_ejecutar_todos_guarda_scores(self, tmp_path):
+        """TrainingEngine con database_url persiste sesiones correctamente."""
+        from app.training.engine import TrainingEngine
+        from app.database.repository import TrainingRepository
+        from sqlalchemy import create_engine as _ce
+        from app.database.database import crear_tablas as _ct
+        ruta = tmp_path / "train_persist.db"
+        url = f"sqlite:///{ruta}"
+        _ct(_ce(url))
+        te = TrainingEngine(database_url=url)
+        te.ejecutar_todos()
+        db = _ce(url)
+        from sqlalchemy.orm import sessionmaker as _sm
+        s = _sm(bind=db)()
+        try:
+            hist = TrainingRepository(s).historial(limit=50)
+            assert len(hist) >= 8
+            assert all(h.score_descubrimiento > 0 for h in hist)
+        finally:
+            s.close()
+            db.dispose()
+
     def test_ultimo_entrenamiento_obsoleto(self, db_factory):
         from app.services.auto_trainer import AutoTrainerScheduler
         db = db_factory()

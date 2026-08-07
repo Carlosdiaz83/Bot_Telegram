@@ -125,6 +125,12 @@ class AutoTrainer:
         logger.info("[TRAINER] === Iniciando ciclo de auto-entrenamiento ===")
         sembradas = 0
         try:
+            from app.database.database import get_engine, crear_tablas
+            crear_tablas(get_engine(self._database_url))
+        except Exception as e:
+            logger.warning("[TRAINER] Error creando tablas: %s", e)
+
+        try:
             from app.services.lessons_service import LessonsService
             sembradas = LessonsService(self._factory()).sembrar_base()
         except Exception as e:
