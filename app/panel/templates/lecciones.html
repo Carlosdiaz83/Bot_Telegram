@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Lecciones de SofIA - Panel SERVIRED{% endblock %}
+{% block content %}
+<h1>Lecciones Aprendidas de SofIA</h1>
+<p style="color:#666; margin-bottom: 1.5rem;">
+    Estas lecciones se inyectan en el prompt del LLM en cada conversacion.
+    SofIA aprende de los entrenamientos (auto) y de vos (humano).
+</p>
+
+<div class="stats-grid">
+    <div class="stat-card highlight">
+        <div class="number">{{ lecciones|length }}</div>
+        <div class="label">Total</div>
+    </div>
+    <div class="stat-card success">
+        <div class="number">{{ lecciones|selectattr('activo')|list|length }}</div>
+        <div class="label">Activas</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>Agregar Leccion Manual</h2>
+    <form method="post" action="/lecciones/agregar" style="display:flex; flex-direction:column; gap:0.75rem; max-width:700px;">
+        <input type="text" name="titulo" placeholder="Titulo corto (ej: No cotizar sin diagnosticar)" required style="padding:0.6rem; border:1px solid #ddd; border-radius:4px;">
+        <textarea name="texto" placeholder="Instruccion concreta para comunicar..." required rows="3" style="padding:0.6rem; border:1px solid #ddd; border-radius:4px;"></textarea>
+        <div style="display:flex; gap:1rem;">
+            <select name="categoria" style="padding:0.6rem; border:1px solid #ddd; border-radius:4px;">
+                {% for c in categorias %}
+                <option value="{{ c }}">{{ c }}</option>
+                {% endfor %}
+            </select>
+            <input type="text" name="contexto" placeholder="Cuando aplica (opcional, ej: caro, cartilla)" style="padding:0.6rem; border:1px solid #ddd; border-radius:4px; flex:1;">
+        </div>
+        <button type="submit" class="btn btn-primary">Guardar Leccion</button>
+    </form>
+</div>
+
+<div class="filters">
+    <a href="/lecciones" class="{% if not filtro_categoria %}active{% endif %}">Todas</a>
+    {% for c in categorias %}
+    <a href="/lecciones?categoria={{ c }}" class="{% if filtro_categoria == c %}active{% endif %}">{{ c }}</a>
+    {% endfor %}
+</div>
+
+<div class="card">
+    {% if lecciones %}
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Categoria</th>
+                <th>Titulo</th>
+                <th>Texto</th>
+                <th>Fuente</th>
+                <th>Usos</th>
+                <th>Votos</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for l in lecciones %}
+            <tr>
+                <td>{{ l.id }}</td>
+                <td><span class="badge badge-tibio">{{ l.categoria }}</span></td>
+                <td><strong>{{ l.titulo }}</strong></td>
+                <td style="max-width:400px;">{{ l.texto }}</td>
+                <td>{{ l.fuente }}</td>
+                <td>{{ l.usos }}</td>
+                <td>{{ l.votos }}</td>
+                <td>
+                    {% if l.activo %}
+                    <span class="badge badge-nuevo">Activa</span>
+                    {% else %}
+                    <span class="badge badge-perdido">Inactiva</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <form method="post" action="/lecciones/{{ l.id }}/toggle" style="display:inline-block;">
+                        <button type="submit" class="btn btn-warning btn-sm">
+                            {% if l.activo %}Desactivar{% else %}Activar{% endif %}
+                        </button>
+                    </form>
+                    <form method="post" action="/lecciones/{{ l.id }}/votar" style="display:inline-block;">
+                        <input type="hidden" name="delta" value="1">
+                        <button type="submit" class="btn btn-success btn-sm">+1</button>
+                    </form>
+                    <form method="post" action="/lecciones/{{ l.id }}/votar" style="display:inline-block;">
+                        <input type="hidden" name="delta" value="-1">
+                        <button type="submit" class="btn btn-danger btn-sm">-1</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#999; text-align:center; padding:2rem;">No hay lecciones todavia. Ejecuta un entrenamiento o agrega una manual.</p>
+    {% endif %}
+</div>
+{% endblock %}

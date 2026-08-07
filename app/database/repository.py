@@ -422,6 +422,198 @@ class TrainingRepository:
         return contador.most_common()
 
 
+class SofiaMemoryRepository:
+    """
+    Repositorio de la memoria persistente de Sofía por chat.
+    """
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def buscar(self, chat_id: int) -> Optional["SofiaMemoryDB"]:
+        """Busca la memoria de un chat."""
+        from app.database.models import SofiaMemoryDB
+        stmt = select(SofiaMemoryDB).where(SofiaMemoryDB.chat_id == chat_id)
+        result = self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def guardar(
+        self,
+        chat_id: int,
+        *,
+        resumen: Optional[str] = None,
+        datos_clave: Optional[dict] = None,
+        objeciones: Optional[list] = None,
+        intereses: Optional[list] = None,
+        preferencias: Optional[dict] = None,
+        ultimo_tema: Optional[str] = None,
+        ultima_etapa: Optional[str] = None,
+        incrementar_conversacion: bool = False,
+    ) -> "SofiaMemoryDB":
+        """Crea o actualiza la memoria persistente de un chat."""
+        import json
+        from app.database.models import SofiaMemoryDB
+
+        memoria = self.buscar(chat_id)
+        if memoria is None:
+            memoria = SofiaMemoryDB(chat_id=chat_id)
+            self._db.add(memoria)
+            incrementar_conversacion = True
+
+        if resumen is not None:
+            memoria.resumen = resumen
+        if datos_clave is not None:
+            memoria.datos_clave = json.dumps(datos_clave, ensure_ascii=False)
+        if objeciones is not None:
+            memoria.objeciones = json.dumps(objeciones, ensure_ascii=False)
+        if intereses is not None:
+            memoria.intereses = json.dumps(intereses, ensure_ascii=False)
+        if preferencias is not None:
+            memoria.preferencias = json.dumps(preferencias, ensure_ascii=False)
+        if ultimo_tema is not None:
+            memoria.ultimo_tema = ultimo_tema
+        if ultima_etapa is not None:
+            memoria.ultima_etapa = ultima_etapa
+        if incrementar_conversacion:
+            memoria.cantidad_conversaciones = (memoria.cantidad_conversaciones or 0) + 1
+
+        self._db.commit()
+        self._db.refresh(memoria)
+        return memoria
+
+    def to_dict(self, memoria: "SofiaMemoryDB") -> dict:
+        """Convierte la memoria a dict legible (JSON deserializado)."""
+        import json
+        def _cargar(valor, defecto):
+            if not valor:
+                return defecto
+            try:
+                return json.loads(valor)
+            except (json.JSONDecodeError, TypeError):
+                return defecto
+        return {
+            "chat_id": memoria.chat_id,
+            "resumen": memoria.resumen,
+            "datos_clave": _cargar(memoria.datos_clave, {}),
+            "objeciones": _cargar(memoria.objeciones, []),
+            "intereses": _cargar(memoria.intereses, []),
+            "preferencias": _cargar(memoria.preferencias, {}),
+            "cantidad_conversaciones": memoria.cantidad_conversaciones or 0,
+            "ultimo_tema": memoria.ultimo_tema,
+            "ultima_etapa": memoria.ultima_etapa,
+            "actualizado": memoria.actualizado,
+        }
+
+
+class SofiaLessonsRepository:
+    """
+    Repositorio de lecciones aprendidas por Sofía.
+    """
+
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def crear(
+        self,
+        titulo: str,
+        texto: str,
+        *,
+        categoria: str = "flujo",
+        contexto: Optional[str] = None,
+        fuente: str = "auto",
+        activo: bool = True,
+    ) -> "SofiaLessonsDB":
+        """Crea una lección."""
+        from app.database.models import SofiaLessonsDB
+        leccion = SofiaLessonsDB(
+            categoria=categoria,
+            titulo=titulo,
+            texto=texto,
+            contexto=contexto,
+            fuente=fuente,
+            activo=activo,
+        )
+        self._db.add(leccion)
+        self._db.commit()
+        self._db.refresh(leccion)
+        logger.info("[LEARNING] Lección creada: %s", titulo)
+        return leccion
+
+    def listar(
+        self,
+        *,
+        activo: Optional[bool] = None,
+        categoria: Optional[str] = None,
+        limit: int = 200,
+    ) -> list["SofiaLessonsDB"]:
+        """Lista lecciones con filtros."""
+        from app.database.models import SofiaLessonsDB
+        stmt = select(SofiaLessonsDB)
+        if activo is not None:
+            stmt = stmt.where(SofiaLessonsDB.activo == activo)
+        if categoria:
+            stmt = stmt.where(SofiaLessonsDB.categoria == categoria)
+        stmt = stmt.order_by(
+            SofiaLessonsDB.votos.desc(),
+            SofiaLessonsDB.usos.desc(),
+            SofiaLessonsDB.creado.desc(),
+        ).limit(limit)
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    def buscar_por_texto(self, texto: str) -> Optional["SofiaLessonsDB"]:
+        """Busca una lección existente por su texto (para no duplicar)."""
+        from app.database.models import SofiaLessonsDB
+        stmt = select(SofiaLessonsDB).where(SofiaLessonsDB.texto == texto)
+        result = self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    def obtener(self, leccion_id: int) -> Optional["SofiaLessonsDB"]:
+        """Obtiene una lección por id."""
+        from app.database.models import SofiaLessonsDB
+        return self._db.get(SofiaLessonsDB, leccion_id)
+
+    def actualizar(
+        self,
+        leccion_id: int,
+        *,
+        activo: Optional[bool] = None,
+        votos: Optional[int] = None,
+    ) -> Optional["SofiaLessonsDB"]:
+        """Actualiza activo o votos de una lección."""
+        from app.database.models import SofiaLessonsDB
+        leccion = self._db.get(SofiaLessonsDB, leccion_id)
+        if leccion is None:
+            return None
+        if activo is not None:
+            leccion.activo = activo
+        if votos is not None:
+            leccion.votos = votos
+        leccion.actualizado = datetime.now(timezone.utc)
+        self._db.commit()
+        self._db.refresh(leccion)
+        return leccion
+
+    def registrar_uso(self, leccion_id: int) -> None:
+        """Suma un uso a la lección (cada vez que se inyecta al LLM)."""
+        from app.database.models import SofiaLessonsDB
+        leccion = self._db.get(SofiaLessonsDB, leccion_id)
+        if leccion is not None:
+            leccion.usos = (leccion.usos or 0) + 1
+            self._db.commit()
+
+    def ultimas_creadas(self, limit: int = 20) -> list["SofiaLessonsDB"]:
+        """Últimas lecciones creadas."""
+        from app.database.models import SofiaLessonsDB
+        stmt = (
+            select(SofiaLessonsDB)
+            .order_by(SofiaLessonsDB.creado.desc())
+            .limit(limit)
+        )
+        result = self._db.execute(stmt)
+        return list(result.scalars().all())
+
+
 class KnowledgeRepository:
     """
     Repositorio de persistencia del conocimiento SERVIRED.

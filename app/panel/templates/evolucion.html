@@ -3,6 +3,13 @@
 {% block content %}
 <h1>Evolucion Comercial de SofIA</h1>
 
+<div class="filters" style="margin-bottom: 1rem;">
+    <form method="post" action="/evolucion/entrenar">
+        <button type="submit" class="btn btn-primary">Entrenar Ahora</button>
+    </form>
+    <a href="/lecciones" class="btn" style="border:1px solid #ddd;">Ver Lecciones Aprendidas</a>
+</div>
+
 <div class="stats-grid">
     <div class="stat-card highlight">
         <div class="number">{{ metricas.total_entrenamientos }}</div>
@@ -58,6 +65,19 @@
         {% endfor %}
     {% else %}
         <p style="color: #999;">Sin errores registrados</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>Recomendaciones Recientes (para mejorar a SofIA)</h2>
+    {% if recomendaciones %}
+        <ul style="padding-left: 1.2rem; line-height: 1.8;">
+            {% for r in recomendaciones %}
+            <li>{{ r }}</li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p style="color: #999;">Aun no hay recomendaciones. Ejecuta un entrenamiento.</p>
     {% endif %}
 </div>
 

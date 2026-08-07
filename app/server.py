@@ -31,6 +31,7 @@ _telegram_thread: threading.Thread | None = None
 _telegram_bot = None
 _webhook_ready = False
 _group_scheduler = None
+_auto_trainer = None
 
 
 def _run_telegram_bot(config: BotConfig) -> None:
@@ -158,6 +159,21 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("[HOOKS] Ganchos de grupos desactivados (TELEGRAM_GROUP_HOOKS=false)")
 
+    # Auto-entrenamiento diario (Sprint 29): corre simulaciones, extrae
+    # lecciones y mide la evolución. Al arrancar ejecuta si está obsoleto.
+    try:
+        from app.services.auto_trainer import AutoTrainerScheduler
+
+        _auto_trainer = AutoTrainerScheduler(
+            database_url=_config.database_url,
+            stale_horas=20.0,
+            intervalo_horas=24.0,
+        )
+        _auto_trainer.iniciar()
+        logger.info("[TRAINER] Auto-entrenamiento diario iniciado")
+    except Exception as exc:
+        logger.error("[TRAINER] No se pudo iniciar auto-entrenamiento: %s", exc, exc_info=True)
+
     yield
 
     # Apagado
@@ -167,6 +183,11 @@ async def lifespan(app: FastAPI):
             await _group_scheduler.detener()
     except Exception as exc:
         logger.error("[HOOKS] Error deteniendo scheduler: %s", exc)
+    try:
+        if _auto_trainer is not None:
+            _auto_trainer.detener()
+    except Exception as exc:
+        logger.error("[TRAINER] Error deteniendo scheduler: %s", exc)
     try:
         if _webhook_ready and _telegram_bot is not None:
             await _telegram_bot.stop_webhook()

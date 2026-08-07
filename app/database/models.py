@@ -348,6 +348,103 @@ class GrupoHookEnviadoDB(Base):
         )
 
 
+class SofiaMemoryDB(Base):
+    """
+    Memoria persistente de Sofía por chat (Sprint 29).
+
+    Almacena el resumen de lo que Sofía aprendió sobre cada usuario
+    a lo largo de TODAS sus conversaciones: datos clave, objeciones,
+    intereses y preferencias. Sobrevive a reinicios de Render.
+
+    El flujo de vendedor NO escribe aquí (cada cotización es un lead
+    distinto y la memoria del vendedor no debe mezclarse con la del
+    cliente que está cotizando).
+    """
+
+    __tablename__ = "sofia_memory"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chat_id = Column(Integer, unique=True, index=True, nullable=False)
+
+    resumen = Column(Text, nullable=True, comment="Resumen persistente de la relación")
+    datos_clave = Column(Text, nullable=True, comment="JSON: nombre, edad, localidad, tipo, familia")
+    objeciones = Column(Text, nullable=True, comment="JSON list: objeciones históricas")
+    intereses = Column(Text, nullable=True, comment="JSON list: intereses detectados")
+    preferencias = Column(Text, nullable=True, comment="JSON: plan preferido, prioridad")
+    cantidad_conversaciones = Column(Integer, default=0, nullable=False)
+    ultimo_tema = Column(String(200), nullable=True)
+    ultima_etapa = Column(String(50), nullable=True)
+
+    creado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    actualizado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"<SofiaMemoryDB(id={self.id}, chat_id={self.chat_id})>"
+
+
+class SofiaLessonsDB(Base):
+    """
+    Lecciones aprendidas por Sofía (Sprint 29).
+
+    Almacena "lecciones" que mejoran la comunicación: aprendidas por
+    entrenamiento (auto), extraídas de errores en conversaciones reales
+    (auto) o agregadas manualmente por humanos en el panel.
+
+    Las lecciones activas se inyectan en el prompt del LLM en cada
+    llamada para que Sofía comunique mejor con el tiempo.
+    """
+
+    __tablename__ = "sofia_lessons"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    categoria = Column(
+        String(50),
+        nullable=False,
+        default="flujo",
+        index=True,
+        comment="objeciones|cierre|info|tono|flujo|prestaciones",
+    )
+    titulo = Column(String(200), nullable=False)
+    texto = Column(Text, nullable=False, comment="Instrucción concreta para comunicar")
+    contexto = Column(Text, nullable=True, comment="Cuándo aplica / keywords")
+    fuente = Column(
+        String(50),
+        nullable=False,
+        default="auto",
+        comment="auto|entrenamiento|humano|panel",
+    )
+    activo = Column(Boolean, default=True, nullable=False, index=True)
+    usos = Column(Integer, default=0, nullable=False, comment="Veces inyectada al LLM")
+    votos = Column(Integer, default=0, nullable=False, comment="Votos +1/-1 (humano)")
+
+    creado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+    actualizado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SofiaLessonsDB(id={self.id}, categoria='{self.categoria}', "
+            f"titulo='{self.titulo}', activo={self.activo})>"
+        )
+
+
 class TrainingSessionDB(Base):
     """
     Modelo persistente de sesión de entrenamiento.

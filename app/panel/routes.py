@@ -7,6 +7,7 @@ cambio de estados y evolución de Sofía.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Form, Query, Request
@@ -19,6 +20,7 @@ from app.database.repository import LeadRepository, ConversationRepository, Trai
 from app.models.lead import EstadoComercial
 from app.panel.dependencies import get_panel_db
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 _templates_dir = str(Path(__file__).parent / "templates")
 templates = Jinja2Templates(directory=_templates_dir)
@@ -205,6 +207,9 @@ def evolucion_sofia(
     training_repo = TrainingRepository(db)
     ultimos = training_repo.ultimos(10)
 
+    # Recomendaciones agregadas de los últimos entrenamientos
+    recomendaciones = _recomendaciones_recientes(db)
+
     return templates.TemplateResponse(
         request,
         "evolucion.html",
@@ -212,5 +217,123 @@ def evolucion_sofia(
             "evolucion": evolucion,
             "metricas": metricas,
             "ultimos_entrenamientos": ultimos,
+            "recomendaciones": recomendaciones,
         },
     )
+
+
+@router.post("/evolucion/entrenar")
+def entrenar_ahora(
+    db: Session = Depends(get_panel_db),
+) -> RedirectResponse:
+    """Ejecuta un ciclo de auto-entrenamiento a pedido."""
+    try:
+        from app.database.database import get_engine
+        from app.services.auto_trainer import AutoTrainer
+        trainer = AutoTrainer(str(get_engine().url))
+        resumen = trainer.ejecutar_ciclo()
+        logger.info("[PANEL] Entrenamiento manual completado: %s", resumen)
+    except Exception as exc:
+        logger.error("[PANEL] Error en entrenamiento manual: %s", exc, exc_info=True)
+    return RedirectResponse(url="/evolucion", status_code=303)
+
+
+def _recomendaciones_recientes(db: Session, limit: int = 8) -> list[str]:
+    """Agrega recomendaciones únicas de los últimos entrenamientos."""
+    import json
+    training_repo = TrainingRepository(db)
+    recientes = training_repo.historial(limit=20)
+    recomendaciones: list[str] = []
+    vistos: set[str] = set()
+    for s in recientes:
+        try:
+            items = json.loads(s.recomendaciones or "[]")
+        except (json.JSONDecodeError, TypeError):
+            items = []
+        for item in items:
+            if isinstance(item, str) and item not in vistos:
+                vistos.add(item)
+                recomendaciones.append(item)
+            if len(recomendaciones) >= limit:
+                return recomendaciones
+    return recomendaciones
+
+
+@router.get("/lecciones", response_class=HTMLResponse)
+def listar_lecciones(
+    request: Request,
+    categoria: str | None = None,
+    db: Session = Depends(get_panel_db),
+) -> HTMLResponse:
+    """Página de lecciones aprendidas por Sofía (ciclo de auto-mejora)."""
+    from app.services.lessons_service import LessonsService
+    svc = LessonsService(_factory_panel())
+    lecciones = svc.listar(activo=None, categoria=categoria or None)
+
+    return templates.TemplateResponse(
+        request,
+        "lecciones.html",
+        {
+            "lecciones": lecciones,
+            "filtro_categoria": categoria or "",
+            "categorias": ["flujo", "objeciones", "cierre", "info", "tono", "prestaciones"],
+        },
+    )
+
+
+@router.post("/lecciones/agregar")
+def agregar_leccion(
+    titulo: str = Form(...),
+    texto: str = Form(...),
+    categoria: str = Form("flujo"),
+    contexto: str = Form(""),
+    db: Session = Depends(get_panel_db),
+) -> RedirectResponse:
+    """Agrega una lección manual (aprendizaje humano)."""
+    from app.services.lessons_service import LessonsService
+    try:
+        LessonsService(_factory_panel()).agregar(
+            titulo=titulo,
+            texto=texto,
+            categoria=categoria,
+            contexto=contexto or None,
+            fuente="humano",
+        )
+    except Exception as exc:
+        logger.error("[PANEL] Error agregando lección: %s", exc, exc_info=True)
+    return RedirectResponse(url="/lecciones", status_code=303)
+
+
+@router.post("/lecciones/{leccion_id}/toggle")
+def toggle_leccion(
+    leccion_id: int,
+    db: Session = Depends(get_panel_db),
+) -> RedirectResponse:
+    """Activa/desactiva una lección."""
+    from app.services.lessons_service import LessonsService
+    svc = LessonsService(_factory_panel())
+    leccion = svc.obtener(leccion_id)
+    if leccion is not None:
+        svc.activar(leccion_id, not leccion.activo)
+    return RedirectResponse(url="/lecciones", status_code=303)
+
+
+@router.post("/lecciones/{leccion_id}/votar")
+def votar_leccion(
+    leccion_id: int,
+    delta: int = Form(...),
+    db: Session = Depends(get_panel_db),
+) -> RedirectResponse:
+    """Vota una lección (+1 positivo, -1 negativo)."""
+    from app.services.lessons_service import LessonsService
+    try:
+        LessonsService(_factory_panel()).votar(leccion_id, 1 if delta > 0 else -1)
+    except Exception as exc:
+        logger.error("[PANEL] Error votando lección: %s", exc, exc_info=True)
+    return RedirectResponse(url="/lecciones", status_code=303)
+
+
+def _factory_panel():
+    """Devuelve un db_factory para servicios que lo necesiten."""
+    from app.database.database import get_engine, get_session_factory
+    return get_session_factory(get_engine())

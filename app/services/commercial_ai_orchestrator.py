@@ -249,6 +249,29 @@ class CommercialAIOrchestrator:
                 context=context,
             )
 
+            # Inyectar lecciones aprendidas (Sprint 29): Sofía comunica mejor
+            # con el tiempo sin tocar código.
+            try:
+                from app.services.lessons_service import LessonsService
+                prompt = LessonsService().aplicar_al_prompt(prompt, limit=5)
+            except Exception as e:
+                logger.warning("[LEARNING] No se pudieron inyectar lecciones: %s", e)
+
+            # Inyectar memoria persistente del usuario (Sprint 29). Se omite en
+            # modo vendedor para no contaminar la cotización de un cliente.
+            try:
+                if not etapa.value.startswith("vendedor"):
+                    from app.services.memory_service import SofiaMemoryService
+                    chat_id = int(getattr(lead, "lead_id", "0") or 0)
+                    if chat_id:
+                        recuerdos = SofiaMemoryService().resumen_para_llm(chat_id)
+                        if recuerdos:
+                            prompt.append(
+                                {"role": "system", "content": recuerdos}
+                            )
+            except Exception as e:
+                logger.warning("[MEMORY] No se pudieron inyectar recuerdos: %s", e)
+
             resultado_llm = self._ai._client.generar_respuesta(
                 mensajes=prompt,
                 temperatura=0.3,

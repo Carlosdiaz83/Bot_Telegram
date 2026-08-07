@@ -217,6 +217,7 @@ class ConversationManager:
             5. Calcular score, persistir, loguear.
         """
         session = self.session_manager.get_or_create(telegram_id)
+        session._ultimo_mensaje = mensaje
 
         lead_existente = False
         if self._db_enabled:
@@ -265,6 +266,7 @@ class ConversationManager:
         if self._db_enabled:
             self._guardar_lead_en_db(telegram_id, lead, session)
             self._guardar_mensaje_en_db(telegram_id, mensaje, respuesta, session)
+            self._guardar_memoria_en_db(telegram_id, lead, session, mensaje)
 
         logger.info(
             "[SALES] user=%s, etapa=%s, estado=%s, score=%d, temp=%s",
@@ -2365,3 +2367,23 @@ class ConversationManager:
                 db.close()
         except Exception as e:
             logger.warning("[DATABASE] Error guardando mensaje: %s", e)
+
+    def _guardar_memoria_en_db(
+        self,
+        telegram_id: int,
+        lead: Lead,
+        session: UserSession,
+        mensaje: str,
+    ) -> None:
+        """
+        Persiste la memoria de Sofía sobre el usuario (Sprint 29).
+
+        Respeta el modo vendedor: la memoria del vendedor nunca se
+        mezcla con los clientes que cotiza.
+        """
+        try:
+            from app.services.memory_service import SofiaMemoryService
+            memoria = SofiaMemoryService(self._db_factory)
+            memoria.guardar_desde_sesion(telegram_id, lead, session)
+        except Exception as e:
+            logger.warning("[MEMORY] Error guardando memoria: %s", e)
