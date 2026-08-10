@@ -25,6 +25,7 @@ from app.services.conversation_manager import ConversationManager
 from app.telegram.group_hooks import (
     TZ_CORDOBA,
     GroupHookScheduler,
+    _GANCHO_INVITACION,
     _GANCHOS_POR_HORARIO,
     elegir_gancho,
 )
@@ -170,23 +171,41 @@ class TestGanchos:
         assert set(_GANCHOS_POR_HORARIO.keys()) == {"08:30", "13:00", "18:30", "21:30"}
 
     def test_informativo_fijo_en_08_30(self):
-        texto = elegir_gancho("08:30", _fecha("08:30"))
+        # 2026-08-04 es índice par → se publica el gancho educativo.
+        texto = elegir_gancho("08:30", _fecha("08:30").replace(day=4))
         assert "Soy Sofía" in texto or "asistente de Servired" in texto
         assert "privado" in texto
 
     def test_utilidad_en_13_00(self):
-        texto = elegir_gancho("13:00", _fecha("13:00"))
+        texto = elegir_gancho("13:00", _fecha("13:00").replace(day=4))
         assert "guardia" in texto
 
     def test_resolucion_en_18_30(self):
-        texto = elegir_gancho("18:30", _fecha("18:30"))
+        texto = elegir_gancho("18:30", _fecha("18:30").replace(day=4))
         assert "obra social" in texto or "monotributo" in texto
 
     def test_nocturno_rota_entre_dias(self):
-        d1 = elegir_gancho("21:30", _fecha("21:30"))
-        d2 = elegir_gancho("21:30", _fecha("21:30").replace(day=4))
-        d3 = elegir_gancho("21:30", _fecha("21:30").replace(day=5))
+        d1 = elegir_gancho("21:30", _fecha("21:30").replace(day=4))
+        d2 = elegir_gancho("21:30", _fecha("21:30").replace(day=5))
+        d3 = elegir_gancho("21:30", _fecha("21:30").replace(day=6))
         assert d1 != d2 or d2 != d3
+
+    def test_invitacion_rota_en_todos_los_horarios(self):
+        # 2026-08-03 es índice impar → en TODOS los horarios sale la invitación.
+        for hora in ("08:30", "13:00", "18:30", "21:30"):
+            texto = elegir_gancho(hora, _fecha(hora))
+            assert "¿Querés que responda consultas de cobertura" in texto
+            assert "serviredasesorbot" in texto
+            assert "startgroup=members" in texto
+
+    def test_invitacion_incluye_link_agregar(self):
+        assert "https://t.me/serviredasesorbot?startgroup=members" in _GANCHO_INVITACION
+
+    def test_dias_educativos_no_envian_invitacion(self):
+        # 2026-08-04 es índice par → mensajes educativos, sin invitación.
+        for hora in ("08:30", "13:00", "18:30"):
+            texto = elegir_gancho(hora, _fecha(hora).replace(day=4))
+            assert "startgroup=members" not in texto
 
 
 # ─────────────────────────────────────────
@@ -210,7 +229,7 @@ class TestScheduler:
             token="token",
             group_chat_ids=[-1001],
             habilitado=True,
-            reloj=lambda: _fecha("08:45"),
+            reloj=lambda: _fecha("08:45").replace(day=4),
             factory=factory_grupos,
         )
         asyncio.run(sched._ejecutar_si_corresponde())
@@ -240,7 +259,7 @@ class TestScheduler:
             token="token",
             group_chat_ids=[-1001],
             habilitado=True,
-            reloj=lambda: _fecha("10:00"),
+            reloj=lambda: _fecha("10:00").replace(day=4),
             factory=factory_grupos,
         )
         asyncio.run(sched._ejecutar_si_corresponde())
@@ -255,7 +274,7 @@ class TestScheduler:
             token="token",
             group_chat_ids=[-1001],
             habilitado=True,
-            reloj=lambda: _fecha("16:00"),
+            reloj=lambda: _fecha("16:00").replace(day=4),
             factory=factory_grupos,
         )
         asyncio.run(sched._ejecutar_si_corresponde())

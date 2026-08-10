@@ -84,13 +84,24 @@ _GANCHOS_NOCTURNOS = [
     ),
 ]
 
+_GANCHO_INVITACION = (
+    "🤝 ¿Querés que responda consultas de cobertura de salud en tu grupo? "
+    "¡Agregame!\n\n"
+    "Ayudo a tu comunidad con dudas de obra social, prepaga, cartillas y "
+    "cobertura en Córdoba capital e interior.\n\n"
+    "👉 Agregame a tu grupo con este link:\n"
+    "https://t.me/serviredasesorbot?startgroup=members"
+)
+
 # Cada horario tiene una lista de ganchos que rotan por día.
 # (con un único elemento, el gancho es fijo; con varios, rota.)
+# La invitación a agregar el bot rota en TODOS los horarios: en su día de
+# rotación se publica en los 4 horarios (4 veces al día).
 _GANCHOS_POR_HORARIO: dict[str, list[str]] = {
-    "08:30": [_GANCHO_INFORMATIVO],
-    "13:00": [_GANCHO_UTILIDAD_DIARIA],
-    "18:30": [_GANCHO_RESOLUCION],
-    "21:30": _GANCHOS_NOCTURNOS,
+    "08:30": [_GANCHO_INFORMATIVO, _GANCHO_INVITACION],
+    "13:00": [_GANCHO_UTILIDAD_DIARIA, _GANCHO_INVITACION],
+    "18:30": [_GANCHO_RESOLUCION, _GANCHO_INVITACION],
+    "21:30": [*_GANCHOS_NOCTURNOS, _GANCHO_INVITACION],
 }
 
 
