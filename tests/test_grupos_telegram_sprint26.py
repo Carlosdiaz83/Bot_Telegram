@@ -87,9 +87,16 @@ class TestGruposDB:
 
         assert -100444 not in listar_grupos_activos(factory=factory_grupos)
 
-    def test_registrar_con_db_no_disponible_no_rompe(self):
-        # Sin factory, usa la DB de la app (puede no existir) — no debe lanzar.
-        assert isinstance(registrar_grupo(999999999, "x"), bool)
+    def test_registrar_con_db_no_disponible_no_rompe(self, monkeypatch):
+        # La DB no está disponible: no debe lanzar y debe devolver False.
+        # No se toca la DB real de la app (evita contaminar health_advisor.db).
+        import app.telegram.grupos_db as gdb
+
+        def _boom():
+            raise RuntimeError("db no disponible")
+
+        monkeypatch.setattr(gdb, "_crear_factory", _boom)
+        assert registrar_grupo(999999999, "x") is False
 
 
 # ─────────────────────────────────────────
@@ -217,8 +224,9 @@ class _SchedulerConRegistro(GroupHookScheduler):
         self.enviados: list[str] = []
         super().__init__(*args, **kwargs)
 
-    async def _enviar_gancho(self, texto: str) -> None:
+    async def _enviar_gancho(self, texto: str) -> bool:
         self.enviados.append(texto)
+        return True
 
 
 class TestScheduler:

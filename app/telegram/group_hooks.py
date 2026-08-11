@@ -218,7 +218,11 @@ class GroupHookScheduler:
         # de golpe si el proceso estuvo dormido varias horas.
         horario = max(candidatos)
         texto = elegir_gancho(horario, ahora)
-        await self._enviar_gancho(texto)
+        if not await self._enviar_gancho(texto):
+            # Sin grupos destino o sin envío exitoso: NO marcar como enviado.
+            # Así el gancho se publica apenas haya un grupo configurado.
+            logger.info("[HOOKS] Gancho %s no enviado (sin destino) — quedará pendiente", horario)
+            return
         enviados_hoy.add(horario)
         self._marcar_enviado(fecha, horario)
         self._enviado_ultimo = {"horario": horario, "texto": texto}
@@ -291,16 +295,23 @@ class GroupHookScheduler:
             logger.debug("[HOOKS] Sin grupos de DB: %s", exc)
         return sorted(ids)
 
-    async def _enviar_gancho(self, texto: str) -> None:
+    async def _enviar_gancho(self, texto: str) -> bool:
+        """Envía el gancho a todos los grupos destino.
+
+        Returns:
+            True si se envió a al menos un grupo, False si no había
+            grupos destino o todos los envíos fallaron.
+        """
         from telegram import Bot
 
         chat_ids = self._grupos_destino()
         if not chat_ids:
             logger.info("[HOOKS] Sin grupos destino — gancho no enviado")
-            return
+            return False
 
         mensaje = f"{texto}{_firma(self._username)}"
         bot = Bot(token=self._token)
+        enviado = False
         for chat_id in chat_ids:
             try:
                 await bot.send_message(
@@ -309,6 +320,8 @@ class GroupHookScheduler:
                     disable_web_page_preview=True,
                 )
                 logger.info("[HOOKS] Gancho enviado a chat_id=%s", chat_id)
+                enviado = True
             except Exception as exc:
                 logger.warning("[HOOKS] Error enviando a chat_id=%s: %s", chat_id, exc)
             await asyncio.sleep(1)
+        return enviado
