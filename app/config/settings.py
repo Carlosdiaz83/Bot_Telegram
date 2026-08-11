@@ -66,6 +66,10 @@ class BotConfig:
     # hora de Córdoba). Desactivar con TELEGRAM_GROUP_HOOKS=false.
     grupo_hooks_habilitado: bool = True
     grupo_hooks_horarios: tuple[str, ...] = ("08:30", "13:00", "18:30", "21:30")
+    # Mensaje de invitación "Agregame a tu grupo" 2 veces al día.
+    # Desactivar con TELEGRAM_GROUP_INVITE=false.
+    grupo_invite_habilitado: bool = True
+    grupo_invite_horarios: tuple[str, ...] = ("12:00", "20:00")
 
     @classmethod
     def from_env(cls, env_path: Path | None = None) -> BotConfig:
@@ -112,5 +116,11 @@ class BotConfig:
         ).lower() in ("true", "1", "yes"),
         grupo_hooks_horarios=_parse_horarios(
             os.getenv("TELEGRAM_GROUP_HOOK_HORARIOS", "08:30,13:00,18:30,21:30")
+        ),
+        grupo_invite_habilitado=os.getenv(
+            "TELEGRAM_GROUP_INVITE", "true"
+        ).lower() in ("true", "1", "yes"),
+        grupo_invite_horarios=_parse_horarios(
+            os.getenv("TELEGRAM_GROUP_INVITE_HORARIOS", "12:00,20:00")
         ),
     )

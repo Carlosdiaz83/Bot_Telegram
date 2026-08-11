@@ -31,6 +31,7 @@ _telegram_thread: threading.Thread | None = None
 _telegram_bot = None
 _webhook_ready = False
 _group_scheduler = None
+_invite_scheduler = None
 _auto_trainer = None
 
 
@@ -66,7 +67,8 @@ def _run_telegram_bot(config: BotConfig) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle: inicia el bot de Telegram al arrancar."""
-    global _config, _telegram_thread, _telegram_bot, _webhook_ready, _group_scheduler
+    global _config, _telegram_thread, _telegram_bot, _webhook_ready
+    global _group_scheduler, _invite_scheduler
 
     logger.info("=== Lifespan iniciado ===")
     logger.info("Main thread: %s", threading.current_thread().name)
@@ -159,6 +161,40 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("[HOOKS] Ganchos de grupos desactivados (TELEGRAM_GROUP_HOOKS=false)")
 
+    # Scheduler del mensaje de invitación "Agregame a tu grupo" (2 veces al día).
+    if _config.grupo_invite_habilitado:
+        try:
+            from app.telegram.group_hooks import (
+                GroupHookScheduler,
+                _MSJ_INVITACION_AGREGAME,
+            )
+
+            username = ""
+            try:
+                username = _telegram_bot._application.bot.username or ""
+            except Exception:
+                pass
+
+            _invite_scheduler = GroupHookScheduler(
+                token=_config.telegram_token,
+                group_chat_ids=_config.telegram_group_chat_ids,
+                horarios=_config.grupo_invite_horarios,
+                habilitado=True,
+                username=username,
+                tipo="invitacion",
+                texto_fijo=_MSJ_INVITACION_AGREGAME,
+            )
+            _invite_scheduler.iniciar()
+            logger.info(
+                "[INVITE] Scheduler de invitación iniciado (grupos=%s, horarios=%s)",
+                _config.telegram_group_chat_ids,
+                ", ".join(_config.grupo_invite_horarios),
+            )
+        except Exception as exc:
+            logger.error("[INVITE] No se pudo iniciar scheduler de invitación: %s", exc, exc_info=True)
+    else:
+        logger.info("[INVITE] Mensaje de invitación desactivado (TELEGRAM_GROUP_INVITE=false)")
+
     # Auto-entrenamiento diario (Sprint 29): corre simulaciones, extrae
     # lecciones y mide la evolución. Al arrancar ejecuta si está obsoleto.
     try:
@@ -183,6 +219,11 @@ async def lifespan(app: FastAPI):
             await _group_scheduler.detener()
     except Exception as exc:
         logger.error("[HOOKS] Error deteniendo scheduler: %s", exc)
+    try:
+        if _invite_scheduler is not None:
+            await _invite_scheduler.detener()
+    except Exception as exc:
+        logger.error("[INVITE] Error deteniendo scheduler de invitación: %s", exc)
     try:
         if _auto_trainer is not None:
             _auto_trainer.detener()

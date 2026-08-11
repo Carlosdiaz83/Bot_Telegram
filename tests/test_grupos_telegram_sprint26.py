@@ -27,6 +27,8 @@ from app.telegram.group_hooks import (
     GroupHookScheduler,
     _GANCHO_INVITACION,
     _GANCHOS_POR_HORARIO,
+    _HORARIOS_INVITACION_DEFECTO,
+    _MSJ_INVITACION_AGREGAME,
     elegir_gancho,
 )
 from app.telegram.grupos_db import (
@@ -349,6 +351,88 @@ class TestScheduler:
         )
         asyncio.run(sched2._ejecutar_si_corresponde())
         assert sched2.enviados == []
+
+
+# ─────────────────────────────────────────
+# Scheduler del mensaje de invitación "Agregame a tu grupo"
+# ─────────────────────────────────────────
+
+class TestSchedulerInvitacion:
+    def test_mensaje_incluye_texto_y_link(self):
+        assert "Agregame a tu grupo" in _MSJ_INVITACION_AGREGAME
+        assert "https://t.me/serviredasesorbot?startgroup=members" in _MSJ_INVITACION_AGREGAME
+
+    def test_horarios_por_defecto_son_dos(self):
+        assert _HORARIOS_INVITACION_DEFECTO == ("12:00", "20:00")
+
+    def test_envia_texto_fijo_dos_veces_al_dia(self, factory_grupos):
+        """La invitación usa texto fijo (no rota) y persiste por separado."""
+        import asyncio
+
+        sched = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            horarios=_HORARIOS_INVITACION_DEFECTO,
+            habilitado=True,
+            reloj=lambda: _fecha("12:15"),
+            factory=factory_grupos,
+            tipo="invitacion",
+            texto_fijo=_MSJ_INVITACION_AGREGAME,
+        )
+        asyncio.run(sched._ejecutar_si_corresponde())
+        assert sched.enviados == [_MSJ_INVITACION_AGREGAME]
+
+        # A las 20:15 envía la segunda invitación del día.
+        sched2 = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            horarios=_HORARIOS_INVITACION_DEFECTO,
+            habilitado=True,
+            reloj=lambda: _fecha("20:15"),
+            factory=factory_grupos,
+            tipo="invitacion",
+            texto_fijo=_MSJ_INVITACION_AGREGAME,
+        )
+        asyncio.run(sched2._ejecutar_si_corresponde())
+        assert sched2.enviados == [_MSJ_INVITACION_AGREGAME]
+
+    def test_invitacion_no_interfiere_con_ganchos(self, factory_grupos):
+        """La invitación no impide que el gancho educativo del mismo día salga."""
+        import asyncio
+        from sqlalchemy import select
+
+        from app.database.models import GrupoHookEnviadoDB, GrupoInvitacionEnviadaDB
+
+        sched_inv = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            horarios=_HORARIOS_INVITACION_DEFECTO,
+            habilitado=True,
+            reloj=lambda: _fecha("12:15"),
+            factory=factory_grupos,
+            tipo="invitacion",
+            texto_fijo=_MSJ_INVITACION_AGREGAME,
+        )
+        asyncio.run(sched_inv._ejecutar_si_corresponde())
+        assert len(sched_inv.enviados) == 1
+
+        # El gancho educativo de 13:00 del mismo día debe salir igual.
+        sched_gancho = _SchedulerConRegistro(
+            token="token",
+            group_chat_ids=[-1001],
+            habilitado=True,
+            reloj=lambda: _fecha("13:15"),
+            factory=factory_grupos,
+        )
+        asyncio.run(sched_gancho._ejecutar_si_corresponde())
+        assert len(sched_gancho.enviados) == 1
+
+        db = factory_grupos()
+        try:
+            assert db.execute(select(GrupoInvitacionEnviadaDB)).scalar_one_or_none() is not None
+            assert db.execute(select(GrupoHookEnviadoDB)).scalar_one_or_none() is not None
+        finally:
+            db.close()
 
 
 # ─────────────────────────────────────────

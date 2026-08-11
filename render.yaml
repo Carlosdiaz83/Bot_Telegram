@@ -42,6 +42,11 @@ services:
         value: true
       - key: TELEGRAM_GROUP_HOOK_HORARIOS
         value: "08:30,13:00,18:30,21:30"
+      # Mensaje de invitación "Agregame a tu grupo" (2 veces al día)
+      - key: TELEGRAM_GROUP_INVITE
+        value: true
+      - key: TELEGRAM_GROUP_INVITE_HORARIOS
+        value: "12:00,20:00"
 
   # Base de datos PostgreSQL
   - type: pgsql

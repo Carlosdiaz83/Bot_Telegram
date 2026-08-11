@@ -93,6 +93,17 @@ _GANCHO_INVITACION = (
     "https://t.me/serviredasesorbot?startgroup=members"
 )
 
+# Mensaje de invitación a agregar el bot a nuevos grupos. Se publica
+# 2 veces al día (por defecto 12:00 y 20:00 Córdoba) y es distinto de
+# los ganchos educativos (no rota, es un texto fijo).
+_MSJ_INVITACION_AGREGAME = (
+    "Agregame a tu grupo para que me hagan consultas y sumes un nuevo servicio!\n\n"
+    "https://t.me/serviredasesorbot?startgroup=members"
+)
+
+# Horarios por defecto del mensaje de invitación (2 veces al día).
+_HORARIOS_INVITACION_DEFECTO = ("12:00", "20:00")
+
 # Cada horario tiene una lista de ganchos que rotan por día.
 # (con un único elemento, el gancho es fijo; con varios, rota.)
 # La invitación a agregar el bot rota en TODOS los horarios: en su día de
@@ -140,6 +151,8 @@ class GroupHookScheduler:
         username: str = "",
         reloj: Optional[callable] = None,
         factory: Optional[callable] = None,
+        tipo: str = "gancho",
+        texto_fijo: str = "",
     ) -> None:
         self._token = token
         self._group_chat_ids = list(group_chat_ids or [])
@@ -148,6 +161,8 @@ class GroupHookScheduler:
         self._username = username or ""
         self._reloj = reloj or (lambda: datetime.now(ZoneInfo(TZ_CORDOBA)))
         self._factory = factory
+        self._tipo = tipo
+        self._texto_fijo = texto_fijo
         self._task: Optional[asyncio.Task] = None
         self._enviados: dict[str, set[str]] = {}
         self._enviado_ultimo: Optional[dict] = None
@@ -217,7 +232,7 @@ class GroupHookScheduler:
         # Solo el más reciente: evita encadenar todos los ganchos atrasados
         # de golpe si el proceso estuvo dormido varias horas.
         horario = max(candidatos)
-        texto = elegir_gancho(horario, ahora)
+        texto = self._texto_fijo or elegir_gancho(horario, ahora)
         if not await self._enviar_gancho(texto):
             # Sin grupos destino o sin envío exitoso: NO marcar como enviado.
             # Así el gancho se publica apenas haya un grupo configurado.
@@ -246,18 +261,26 @@ class GroupHookScheduler:
             return self._factory()
         return _crear_factory()()
 
+    def _tabla(self):
+        """Modelo de persistencia según el tipo de mensaje."""
+        from app.database.models import GrupoHookEnviadoDB, GrupoInvitacionEnviadaDB
+
+        if self._tipo == "invitacion":
+            return GrupoInvitacionEnviadaDB
+        return GrupoHookEnviadoDB
+
     def _ya_enviado(self, fecha: str, horario: str) -> bool:
         try:
             from sqlalchemy import select
 
-            from app.database.models import GrupoHookEnviadoDB
+            tabla = self._tabla()
 
             db = self._sesion()
             try:
                 fila = db.execute(
-                    select(GrupoHookEnviadoDB).where(
-                        GrupoHookEnviadoDB.fecha == fecha,
-                        GrupoHookEnviadoDB.horario == horario,
+                    select(tabla).where(
+                        tabla.fecha == fecha,
+                        tabla.horario == horario,
                     )
                 ).scalar_one_or_none()
                 return fila is not None
@@ -269,11 +292,11 @@ class GroupHookScheduler:
 
     def _marcar_enviado(self, fecha: str, horario: str) -> None:
         try:
-            from app.database.models import GrupoHookEnviadoDB
+            tabla = self._tabla()
 
             db = self._sesion()
             try:
-                db.add(GrupoHookEnviadoDB(fecha=fecha, horario=horario))
+                db.add(tabla(fecha=fecha, horario=horario))
                 db.commit()
             finally:
                 db.close()

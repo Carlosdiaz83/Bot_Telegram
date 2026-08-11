@@ -348,6 +348,39 @@ class GrupoHookEnviadoDB(Base):
         )
 
 
+class GrupoInvitacionEnviadaDB(Base):
+    """
+    Registro persistente de mensajes de invitación a agregar el bot.
+
+    Igual propósito que GrupoHookEnviadoDB pero para el mensaje
+    "Agregame a tu grupo" que se publica 2 veces al día en los grupos.
+    Tabla separada para que ambos mensajes no colisionen en la misma
+    fecha/horario y se puedan configurar horarios superpuestos.
+    """
+
+    __tablename__ = "grupo_invitaciones_enviadas"
+    __table_args__ = (
+        UniqueConstraint(
+            "fecha", "horario", name="uq_grupo_invitaciones_fecha_horario"
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fecha = Column(String(10), nullable=False, index=True, comment="YYYY-MM-DD (Córdoba)")
+    horario = Column(String(5), nullable=False, index=True, comment="HH:MM (Córdoba)")
+    creado = Column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<GrupoInvitacionEnviadaDB(id={self.id}, fecha={self.fecha}, "
+            f"horario={self.horario})>"
+        )
+
+
 class SofiaMemoryDB(Base):
     """
     Memoria persistente de Sofía por chat (Sprint 29).
