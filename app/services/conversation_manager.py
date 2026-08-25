@@ -1417,8 +1417,8 @@ class ConversationManager:
 
         if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
             if (
-                self._detectar_recibo_sueldo(mensaje)
-                or self._es_confirmacion_simple(mensaje)
+                self._es_confirmacion_simple(mensaje)
+                and not self._detectar_recibo_sueldo(mensaje)
             ):
                 lead.tiene_recibo_sueldo = True
                 if not lead.conceptos_obra_social:
@@ -1714,11 +1714,10 @@ class ConversationManager:
         # Detectar recibo de sueldo si aplica
         if lead.tipo_afiliacion == TipoAfiliacion.RELACION_DEPENDENCIA:
             if (
-                self._detectar_recibo_sueldo(mensaje)
-                or self._es_confirmacion_simple(mensaje)
+                self._es_confirmacion_simple(mensaje)
+                and not self._detectar_recibo_sueldo(mensaje)
             ):
                 lead.tiene_recibo_sueldo = True
-                # Extraer conceptos solo cuando el mensaje menciona recibo
                 if not lead.conceptos_obra_social:
                     conceptos = self._extraer_conceptos_obra_social(mensaje)
                     if conceptos:
