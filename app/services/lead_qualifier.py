@@ -142,17 +142,16 @@ def _extraer_nombre(texto: str) -> str | None:
         if match:
             return match.group(1).strip()
 
-    # Nombre suelto: palabra única con mayúscula inicial (2+ chars)
+    # Nombre suelto: palabra única (2+ chars), no es palabra común
     palabras = texto.strip().split()
     if len(palabras) == 1:
         palabra = palabras[0]
         if (
             len(palabra) >= 3
-            and palabra[0].isupper()
             and palabra.isalpha()
             and palabra.lower() not in _NO_NOMBRES
         ):
-            return palabra
+            return palabra.capitalize()
 
     return None
 
