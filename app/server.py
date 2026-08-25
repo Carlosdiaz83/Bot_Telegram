@@ -79,13 +79,24 @@ async def lifespan(app: FastAPI):
         _config = BotConfig.from_env()
         logger.info("Config cargada (env=%s, token=%s...)", _config.app_env, _config.telegram_token[:10])
 
-    # Iniciar DB + migraciones
-    logger.info("Inicializando base de datos...")
+    # Iniciar DB + migraciones (con fallback a SQLite si PostgreSQL falla)
+    logger.info("Inicializando base de datos (url=%s)...", _config.database_url.split("@")[-1] if "@" in _config.database_url else _config.database_url)
     from app.database.database import get_engine, crear_tablas, get_session_factory
     from app.database.migrations import ejecutar_migraciones
     from app.database.bootstrap import bootstrap_datos
-    engine = get_engine(_config.database_url)
-    crear_tablas(engine)
+    try:
+        engine = get_engine(_config.database_url)
+        crear_tablas(engine)
+    except Exception as db_err:
+        logger.warning(
+            "[DB] Conexión a DB primaria falló (%s): %s — fallback a SQLite",
+            type(db_err).__name__, str(db_err)[:200],
+        )
+        import os
+        fallback_url = os.getenv("DATABASE_URL_FALLBACK", "sqlite:///./health_advisor.db")
+        _config.database_url = fallback_url
+        engine = get_engine(fallback_url)
+        crear_tablas(engine)
     ejecutar_migraciones(engine)
 
     # Verificar datos esenciales (precios, aportes, knowledge)
