@@ -320,15 +320,21 @@ class ConversationManager:
 
         if es_recibo:
             lead.tiene_recibo_sueldo = True
-            # Si es PDF, intentar extraer conceptos de obra social del texto.
-            if not lead.conceptos_obra_social and ruta_archivo.lower().endswith(".pdf"):
-                conceptos = self._extraer_conceptos_pdf(ruta_archivo)
-                if conceptos:
-                    lead.conceptos_obra_social = conceptos
-                    logger.info(
-                        "[DOCUMENTO] Conceptos extraídos del PDF — user=%s: %s",
-                        telegram_id, conceptos,
-                    )
+            es_imagen = ruta_archivo.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+            es_pdf = ruta_archivo.lower().endswith(".pdf")
+            conceptos_nuevos: list[float] = []
+            if es_pdf:
+                conceptos_nuevos = self._extraer_conceptos_pdf(ruta_archivo)
+            elif es_imagen:
+                conceptos_nuevos = self._extraer_conceptos_imagen(ruta_archivo)
+            if conceptos_nuevos:
+                existentes = list(lead.conceptos_obra_social) if lead.conceptos_obra_social else []
+                lead.conceptos_obra_social = existentes + conceptos_nuevos
+                logger.info(
+                    "[DOCUMENTO] Conceptos extraídos de %s — user=%s: %s (total acumulado: %s)",
+                    "PDF" if es_pdf else "OCR",
+                    telegram_id, conceptos_nuevos, lead.conceptos_obra_social,
+                )
 
         logger.info(
             "[DOCUMENTO] Archivo recibido — user=%s, archivo=%s, tipo=%s, "
@@ -400,6 +406,17 @@ class ConversationManager:
             return []
         return self._extraer_conceptos_obra_social(texto)
 
+    def _extraer_conceptos_imagen(self, ruta_archivo: str) -> list[float]:
+        """Extrae conceptos de obra social de una foto de recibo usando OCR."""
+        try:
+            from app.ocr import extraer_conceptos_imagen
+            return extraer_conceptos_imagen(ruta_archivo)
+        except Exception as e:
+            logger.warning(
+                "[OCR] No se pudo procesar imagen %s: %s", ruta_archivo, e
+            )
+            return []
+
     def _aplicar_recibo_pendiente(self, session: UserSession) -> None:
         """Si hay un archivo guardado sin tipo y el tipo resultó relación de
         dependencia, lo aplica como recibo (sin volver a pedir el archivo)."""
@@ -411,8 +428,15 @@ class ConversationManager:
         ):
             lead.tiene_recibo_sueldo = True
             ruta = str(session.recibo_ruta)
-            if not lead.conceptos_obra_social and ruta.lower().endswith(".pdf"):
-                conceptos = self._extraer_conceptos_pdf(ruta)
+            if not lead.conceptos_obra_social:
+                es_imagen = ruta.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))
+                es_pdf = ruta.lower().endswith(".pdf")
+                if es_pdf:
+                    conceptos = self._extraer_conceptos_pdf(ruta)
+                elif es_imagen:
+                    conceptos = self._extraer_conceptos_imagen(ruta)
+                else:
+                    conceptos = []
                 if conceptos:
                     lead.conceptos_obra_social = conceptos
                     logger.info(
@@ -553,6 +577,20 @@ class ConversationManager:
             session._handler_ejecutado = "_handle_cierre"
             return self._wrap_ia(
                 self._handle_cierre(session, mensaje),
+                session, mensaje, interpretacion=resultado,
+            )
+
+        if etapa == EtapaConversacion.ESPERANDO_EMAIL:
+            session._handler_ejecutado = "_handle_esperando_email"
+            return self._wrap_ia(
+                self._handle_esperando_email(session, mensaje),
+                session, mensaje, interpretacion=resultado,
+            )
+
+        if etapa == EtapaConversacion.ESPERANDO_TELEFONO:
+            session._handler_ejecutado = "_handle_esperando_telefono"
+            return self._wrap_ia(
+                self._handle_esperando_telefono(session, mensaje),
                 session, mensaje, interpretacion=resultado,
             )
 
@@ -820,6 +858,18 @@ class ConversationManager:
                 session, mensaje, interpretacion=resultado,
             )
 
+        if etapa == EtapaConversacion.ESPERANDO_EMAIL:
+            return self._wrap_ia(
+                self._handle_esperando_email(session, mensaje),
+                session, mensaje, interpretacion=resultado,
+            )
+
+        if etapa == EtapaConversacion.ESPERANDO_TELEFONO:
+            return self._wrap_ia(
+                self._handle_esperando_telefono(session, mensaje),
+                session, mensaje, interpretacion=resultado,
+            )
+
         # ── Etapas sin handler (CALIFICADO, DERIVADO) → redirect según datos ──
         logger.info(
             "[DIRECTOR] user=%s, etapa=%s → sin handler (directo), "
@@ -949,15 +999,14 @@ class ConversationManager:
         if plan_preguntado:
             return self._cotizar_plan_especifico(session, plan_preguntado)
 
-        # Cliente dice "sí/dale/ok" → intentar cierre
+        # Cliente dice "sí/dale/ok" → comenzar el cierre pidiendo datos de contacto
         if any(p in mensaje.lower() for p in [
             "sí", "si", "dale", "avanzamos", "ok", "quiero",
         ]):
             lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
-            session.avanzar_etapa(EtapaConversacion.INTENTANDO_CIERRE)
-            cierre = intentar_cierre(lead)
+            session.avanzar_etapa(EtapaConversacion.ESPERANDO_EMAIL)
             session.intento_de_cierre = True
-            return cierre.respuesta
+            return self._mensaje_pedir_email(lead)
 
         # Sin respuesta afirmativa → reforzar valor (sin force-advance)
         beneficios = self.knowledge.obtener_beneficios()
@@ -1026,13 +1075,9 @@ class ConversationManager:
         session.resultado_cierre = resultado
 
         if resultado == ResultadoCierre.ACEPTO:
-            lead.estado_comercial = EstadoComercial.VENDIDO
-            session.avanzar_etapa(EtapaConversacion.CALIFICADO)
-            return (
-                f"¡Excelente {lead.nombre or ''}! Me alegra que hayas decidido avanzar. "
-                "Un asesor se comunicará con vos para completar el proceso. "
-                "¡Bienvenido a Servired! 😊"
-            )
+            lead.estado_comercial = EstadoComercial.INTENTANDO_CIERRE
+            session.avanzar_etapa(EtapaConversacion.ESPERANDO_EMAIL)
+            return self._mensaje_pedir_email(lead)
 
         if resultado == ResultadoCierre.RECHAZO:
             lead.estado_comercial = EstadoComercial.PERDIDO
@@ -1054,6 +1099,51 @@ class ConversationManager:
             )
 
         return recuperar_indeciso(lead)
+
+    def _mensaje_pedir_email(self, lead: Lead) -> str:
+        """Pide el email del cliente para que afiliaciones lo contacte."""
+        nombre = lead.nombre or ""
+        saludo = f"¡Perfecto {nombre}! " if nombre else "¡Perfecto! "
+        return (
+            f"{saludo}Para avanzar con tu afiliación necesito tus datos de "
+            "contacto. ¿Cuál es tu dirección de email?"
+        )
+
+    def _handle_esperando_email(self, session: UserSession, mensaje: str) -> str:
+        """Recolecta el email del cliente para el contacto de afiliaciones."""
+        import re
+        lead = session.lead
+        email = mensaje.strip().lower()
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            return (
+                "Ups, ese email no parece válido. ¿Me lo pasás de nuevo? "
+                "Por ejemplo: nombre@gmail.com"
+            )
+        lead.email = email
+        session.avanzar_etapa(EtapaConversacion.ESPERANDO_TELEFONO)
+        return (
+            "¡Genial! Ahora sí, ¿cuál es tu número de teléfono para que "
+            "afiliaciones te contacte?"
+        )
+
+    def _handle_esperando_telefono(self, session: UserSession, mensaje: str) -> str:
+        """Recolecta el teléfono del cliente y cierra la venta."""
+        import re
+        lead = session.lead
+        digitos = re.sub(r"\D", "", mensaje)
+        if len(digitos) < 6:
+            return (
+                "Ese número no parece completo. ¿Me pasás tu teléfono? "
+                "Por ejemplo: 351 555-1234"
+            )
+        lead.telefono = digitos
+        lead.estado_comercial = EstadoComercial.VENDIDO
+        session.avanzar_etapa(EtapaConversacion.CALIFICADO)
+        nombre = lead.nombre or ""
+        return (
+            f"¡Listo {nombre}! Dejamos tus datos listos: afiliaciones te va a "
+            "contactar para completar el proceso. ¡Bienvenido a Servired! 😊"
+        )
 
     # ─────────────────────────────────────────
     # Modo vendedor — cotizaciones para clientes
@@ -1676,7 +1766,7 @@ class ConversationManager:
                 texto += "\n"
             texto += (
                 "¿Querés que te cuente más detalles de algún plan "
-                "o te parece bien alguno para avanzar?"
+                "o avanzamos con la afiliación?"
             )
             session.adjuntos_pendientes = self._adjuntos_planes(
                 ["gold", "medimax gold", "medimax"]
@@ -1725,7 +1815,7 @@ class ConversationManager:
 
         texto += (
             "¿Querés que te cuente más detalles de algún plan "
-            "o te parece bien alguno para avanzar?"
+            "o avanzamos con la afiliación?"
         )
 
         # Cartillas oficiales de los planes como respaldo (tras la info).
@@ -2043,6 +2133,18 @@ class ConversationManager:
             return (
                 "¿Te pareció bien la propuesta que te mostré? "
                 "Si querés, avanzamos con la afiliación."
+            )
+
+        if etapa == EtapaConversacion.ESPERANDO_EMAIL:
+            return (
+                "Quedó pendiente tu email para avanzar con la afiliación. "
+                "¿Cuál es?"
+            )
+
+        if etapa == EtapaConversacion.ESPERANDO_TELEFONO:
+            return (
+                "Quedó pendiente tu teléfono para que afiliaciones te contacte. "
+                "¿Cuál es?"
             )
 
         # NUEVO / DESCUBRIENDO_NECESIDAD

@@ -9,9 +9,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Instalar dependencias del sistema (PostgreSQL driver)
+# Instalar dependencias del sistema (PostgreSQL driver + Tesseract OCR)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends gcc libpq-dev && \
+    apt-get install -y --no-install-recommends gcc libpq-dev tesseract-ocr tesseract-ocr-spa libgl1 libglib2.0-0 && \
     rm -rf /var/lib/apt/lists/*
 
 # Instalar dependencias Python
