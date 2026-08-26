@@ -70,6 +70,9 @@ class BotConfig:
     # Desactivar con TELEGRAM_GROUP_INVITE=false.
     grupo_invite_habilitado: bool = True
     grupo_invite_horarios: tuple[str, ...] = ("12:00", "20:00")
+    # Respuestas reactivas del bot en grupos (responde a mensajes relevantes).
+    # Desactivar con TELEGRAM_GROUP_LISTENER=false para que solo envíe ganchos programados.
+    grupo_listener_habilitado: bool = True
 
     @classmethod
     def from_env(cls, env_path: Path | None = None) -> BotConfig:
@@ -123,4 +126,7 @@ class BotConfig:
         grupo_invite_horarios=_parse_horarios(
             os.getenv("TELEGRAM_GROUP_INVITE_HORARIOS", "12:00,20:00")
         ),
+        grupo_listener_habilitado=os.getenv(
+            "TELEGRAM_GROUP_LISTENER", "true"
+        ).lower() in ("true", "1", "yes"),
     )

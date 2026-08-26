@@ -72,7 +72,7 @@ class TelegramBot:
         # Escucha de grupos: detecta alta/baja del bot y mensajes relevantes.
         # Debe registrarse ANTES del handler genérico para que los mensajes
         # de grupo no entren al flujo privado.
-        listener = GroupListener()
+        listener = GroupListener(habilitado=self._config.grupo_listener_habilitado)
         application.add_handler(
             ChatMemberHandler(
                 listener.handle_my_chat_member,

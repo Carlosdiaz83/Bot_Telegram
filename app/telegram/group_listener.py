@@ -59,8 +59,9 @@ _COOLDOWN_MENCION_SEG = 120  # 2 min
 class GroupListener:
     """Detecta mensajes relevantes en grupos y responde con un CTA."""
 
-    def __init__(self, manager=None) -> None:
+    def __init__(self, manager=None, habilitado: bool = True) -> None:
         self._manager = manager
+        self._habilitado = habilitado
         self._cooldown_auto: dict[int, float] = {}
         self._cooldown_mencion: dict[int, float] = {}
         self._grupos_registrados: set[int] = set()
@@ -221,6 +222,9 @@ class GroupListener:
         if chat.id not in self._grupos_registrados:
             registrar_grupo(chat.id, chat.title or "")
             self._grupos_registrados.add(chat.id)
+
+        if not self._habilitado:
+            return
 
         message = update.message
         if message is None or not message.text:
